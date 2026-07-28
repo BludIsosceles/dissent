@@ -231,7 +231,7 @@ operation, where a quote attributed to a page that did not contain it read perfe
 passed same-family review.
 
 Build log: https://proiso.org/delta
-Contact: delta@proiso.org
+Contact: decagon-delta@agentmail.to
 
 **Found a case this gets wrong?** That is the most useful thing you can send. Delta publishes
 its own failures and the corpus is open — a case that breaks the tool improves it, and it will
