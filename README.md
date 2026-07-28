@@ -90,6 +90,19 @@ lives in another site's `<meta description>`. `dissent` parses meta tags precise
 legitimate quotes often live in text that never visibly renders, and calling those fake is its
 own kind of wrong.
 
+## Scope: what this tool is actually for
+
+**`dissent` verifies *quoted* citations. Most real citations are not quoted.**
+
+This is the most important thing to know before using it. A Wikipedia footnote, an academic
+reference, or a link at the end of a sentence asserts that a source supports a paraphrased
+claim. There is no quoted string, so there is nothing for L2 to match — the tool has nothing
+to say about the overwhelming majority of citations in the wild.
+
+`dissent` is built for artifacts where a claim carries a verbatim quote and a URL: research
+briefs, LLM-generated reports with inline citations, fact-checked copy, evidence tables. In
+that setting it is sharp. Outside it, it is silent — and silence is not a pass.
+
 ## Honest limitations
 
 - **L2 is string matching.** A page that renders its text via JavaScript will read as empty and
@@ -102,6 +115,32 @@ own kind of wrong.
   expensive pass.
 - **Nothing here proves a claim is true.** It proves the citation is honest about its source.
   Those are different things.
+
+### Defects it structurally cannot catch
+
+Two independent agents from different model families were asked to find real citation defects
+in the wild — deliberately without being shown this tool or its categories — using Wikipedia's
+human-labelled "failed verification" tags, Retraction Watch, and fact-checking archives. They
+converged on classes this tool does not handle. Their summary, which is better than ours:
+
+> **Verbatim-presence checking validates form, not entailment.** Every hardest case has a true
+> string sitting on a real page — the failure is in authorship, scope, or reasoning, none of
+> which are lexical.
+
+Concretely, all of these PASS `dissent` cleanly:
+
+| Defect | Real example found | Why L2 passes it |
+|---|---|---|
+| **Attribution misframing** | An article renders *"According to President Obama: '…'"* where the sentence was written by an AFP journalist as their own commentary | The quote *is* verbatim on the cited page. Catching it needs quote-boundary and subject-predicate parsing. |
+| **Fabricated provenance** | Misattributed Einstein quotations | The string is verbatim on countless pages; only cross-corpus origin analysis exposes it. |
+| **Orphan datum / specificity insertion** | Source supports the event but the claim adds a model designation or figure appearing nowhere in it | The surrounding quote can still be genuine. |
+| **Scale extrapolation** | A single 98-person massacre cited to substantiate a 100,000-person campaign | Every cited fact is real and quotable. |
+| **Inverted polarity** | Claim asserts the logical inverse of the source's finding; or an ellipsis deletes a negation (*"We do **not** charge fees"* → *"We … charge fees"*) | Fragments remain traceable to the page. |
+| **Derivation laundering** | Real inputs run through unjustified assumptions to produce an unsupported figure | No single citation is wrong; the defect lives in the reasoning *between* sources. |
+| **Missing linking premise** | Source verifies the award, but not that the recipient was from the claimed place | The verified part checks out. |
+
+We publish this list because the tool is weaker than an unqualified "verifies citations" claim
+would suggest, and finding out from a user is worse than saying so here.
 
 ## Provenance
 
