@@ -36,12 +36,13 @@ import json
 import re
 import subprocess
 import sys
+import time
 import unicodedata
 import urllib.error
 import urllib.request
 from typing import Iterable
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 UA = "Mozilla/5.0 (compatible; dissent/0.1; +https://proiso.org/delta)"
 
@@ -123,7 +124,11 @@ def normalize(text: str) -> str:
     text = html.unescape(text)
     text = unicodedata.normalize("NFKC", text)
     text = (
-        text.replace("‘", "'").replace("’", "'")
+        # Single and double quotes are folded to ONE character. A source writing
+        # "meritocracy" quoted as 'meritocracy' is a typographic difference, not
+        # a dishonest citation, and treating it as one produced false positives
+        # against perfectly good sources.
+        text.replace("‘", '"').replace("’", '"').replace("'", '"')
         .replace("“", '"').replace("”", '"')
         .replace("–", "-").replace("—", "-")
         .replace(" ", " ")
@@ -143,12 +148,17 @@ def strip_markup(raw: str) -> str:
     this case -- a quote that looked fabricated was real, and lived in the page's
     meta description.
     """
-    metas = re.findall(
-        r'<meta[^>]+(?:name|property)=["\'](?:description|og:description|og:title)["\']'
-        r'[^>]+content=["\']([^"\']*)["\']',
-        raw,
-        re.IGNORECASE,
-    )
+    # Parse each <meta> tag independently of attribute ORDER. The previous
+    # pattern required name= before content=, so a page writing them the other
+    # way round (python.org, among others) lost its meta text entirely and every
+    # quote sourced from it read as fabricated.
+    metas = []
+    for tag in re.findall(r"<meta\b[^>]*>", raw, re.IGNORECASE):
+        key = re.search(r'(?:name|property)\s*=\s*["\']?([\w:.-]+)', tag, re.IGNORECASE)
+        val = re.search(r'content\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))', tag, re.IGNORECASE)
+        if key and val and key.group(1).lower() in (
+                "description", "og:description", "og:title", "twitter:description"):
+            metas.append(next(g for g in val.groups() if g is not None))
     body = re.sub(r"(?is)<(script|style|noscript)\b.*?</\1>", " ", raw)
     # Inline tags are removed WITHOUT a separator; block tags become whitespace.
     #
@@ -182,16 +192,32 @@ def best_window(haystack: str, needle: str) -> str | None:
 
 # ---------------------------------------------------------------- layers 1 & 2
 
-def fetch(url: str, timeout: int = 25) -> tuple[int | None, str, str | None]:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html,*/*"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read(4_000_000).decode(resp.headers.get_content_charset() or "utf-8", "replace")
-            return resp.status, raw, None
-    except urllib.error.HTTPError as e:
-        return e.code, "", f"HTTP {e.code}"
-    except Exception as e:  # noqa: BLE001 - network reality is broad
-        return None, "", f"{type(e).__name__}: {e}"
+MAX_BYTES = 40_000_000   # the HTML spec alone is ~15.6 MB; 4 MB silently hid
+                         # any quote in the latter three-quarters of long documents
+
+
+def fetch(url: str, timeout: int = 30, retries: int = 2) -> tuple[int | None, str, str | None]:
+    """Fetch with a retry. A transient network failure is not evidence of a bad
+    citation, and reporting it as one is a false accusation."""
+    last = None
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(url, headers={
+            "User-Agent": UA,
+            "Accept": "text/html,application/xhtml+xml,application/pdf,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read(MAX_BYTES).decode(
+                    resp.headers.get_content_charset() or "utf-8", "replace")
+                return resp.status, raw, None
+        except urllib.error.HTTPError as e:
+            return e.code, "", f"HTTP {e.code}"      # a real answer; do not retry
+        except Exception as e:  # noqa: BLE001 - network reality is broad
+            last = f"{type(e).__name__}: {e}"
+            if attempt < retries:
+                time.sleep(1.5 * (attempt + 1))
+    return None, "", last
 
 
 APP_SHELL = re.compile(
@@ -213,6 +239,16 @@ def readability(raw: str, text: str) -> str | None:
         return "single-page-app shell detected with little server-rendered text"
     if raw.lstrip()[:5] == "%PDF-":
         return "PDF content — text extraction not supported"
+    # Bot-block / challenge / stub response. Observed: python.org returns a
+    # ~11 KB body with zero <meta> tags and no <title> to this client. That is
+    # the SERVER declining to talk, not evidence about the citation, and
+    # reporting it as NOT_VERBATIM accuses an honest source of being fake.
+    if len(raw) < 25_000 and not re.search(r"<title[^>]*>", raw, re.I) \
+            and not re.search(r"<meta\b", raw, re.I):
+        return "response lacks <title> and <meta> — likely a bot-block or stub, not the real page"
+    if re.search(r"(?i)(captcha|are you a robot|enable javascript to continue|"
+                 r"access denied|cf-browser-verification|checking your browser)", raw[:6000]):
+        return "anti-bot challenge page returned instead of content"
     return None
 
 
