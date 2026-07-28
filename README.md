@@ -107,12 +107,25 @@ and raw output published for audit. Wilson 95% intervals.
 | `ATTRIBUTION_MISFRAMING` — verbatim quote, wrong speaker | 6 | 0% [0–39] |
 | **Clean controls — FALSE POSITIVES** | 30 | **23% wrongly flagged** [12–41] |
 
-| | v0.1 | v0.2 | **v0.3** |
-|---|---|---|---|
-| False positives | 38% | 34% | **23%** |
-| Precision | 60% | 67% | **76%** |
-| Recall | 51% | 65% | 63% |
-| F1 | 0.55 | 0.66 | **0.69** |
+| | v0.1 | v0.2 | v0.3 | **v0.4** |
+|---|---|---|---|---|
+| False positives | 38% | 34% | 23% | **7%** [2–22] |
+| Precision | 60% | 67% | 76% | **88%** |
+| Recall | 51% | 65% | **63%** | 45% |
+| F1 | 0.55 | 0.66 | **0.69** | 0.60 |
+
+**v0.4 is not simply better than v0.3 — it is a more cautious operating point.**
+Fixing four false-positive mechanisms (quote-character equivalence, a 4 MB read cap that hid
+quotes deep in long documents, order-dependent meta parsing, and bot-block responses being
+reported as fabrication) cut false positives 23% → 7%. But abstention is not free: every page
+the tool now declines to judge is a page where it also cannot catch a *real* fabrication.
+`FABRICATED` fell 100% → 67% and `MISATTRIBUTED` 100% → 40%, because a fabricated citation to a
+bot-blocked or unreadable page now returns `UNVERIFIABLE` rather than `NOT_VERBATIM`.
+**Precision rose because the tool says less. F1 fell.**
+
+Choose the version by what your errors cost: **v0.4 for low false-alarm work** where a wasted
+human read is expensive; **v0.3 for maximum recall** where a missed fabrication is worse than a
+false alarm.
 
 ### How the biggest fix was found — and why we had it wrong
 
