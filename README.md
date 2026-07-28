@@ -161,6 +161,37 @@ It is not free. On the same run, false positives over clean controls rose to **4
 Leave it off when volume matters more than recall. `DISPUTED` means *the judges disagreed* —
 that is a signal to read it yourself, not a verdict.
 
+### The 7% figure is IN-SAMPLE — do not rely on it
+
+Flagged by an external reviewer with no stake in Delta's outcomes, checked, and confirmed:
+
+**The same 30 clean controls were used to diagnose each false-positive mechanism AND to verify
+each repair.** Four rounds of that (38% → 34% → 23% → 7%) makes the final figure a *fit
+statistic*, not an accuracy estimate. Stated plainly: **7% of 30 is two cases** — "two of the
+thirty controls we tuned against still flag." The published interval [2–22] already says the
+sample cannot distinguish 7% from 22%. **Out-of-sample false positives are unknown and
+plausibly higher.** A fresh, never-diagnosed control set is required before this number gates
+any decision.
+
+**It is also sensitive to exclusion choices.** Counting all 32 controls including ones the
+runner marks stale gives **16%**, not 7%. Both are defensible — 7% excludes cases whose source
+page has since decayed; 16% is closer to what a user actually experiences — but they are
+different quantities and only one was headlined.
+
+**False positives are strongly population-dependent**, which the version table hides:
+
+| Page type | n | FP |
+|---|---|---|
+| Long documents | 5 | **40%** |
+| Redirect / canonical | 5 | 20% |
+| JavaScript-rendered | 6 | 17% |
+| Static HTML | 8 | 12% |
+| `<meta>`-only | 5 | 0% |
+| PDF / non-HTML | 3 | 0% |
+
+A 0%–40% spread means any single headline FP number is a property of the *corpus mix*, not of
+the tool. Expect a different rate on your documents.
+
 ### The honest reading
 
 - **23% is still high.** Roughly **1 in 4 honest citations is flagged.** Every flag means
