@@ -90,6 +90,39 @@ lives in another site's `<meta description>`. `dissent` parses meta tags precise
 legitimate quotes often live in text that never visibly renders, and calling those fake is its
 own kind of wrong.
 
+## Measured performance
+
+Self-test against a locked, content-hashed corpus of 68 cases (36 injected defects across 6
+classes, 32 stratified clean controls). Corpus, page hashes, labels and raw runner output are
+published for audit at `builds/op-003/` in the Delta repo. Wilson 95% intervals.
+
+| Defect class | n | detected |
+|---|---|---|
+| `FABRICATED` — quote is on no page | 6 | **100%** [61–100] |
+| `MISATTRIBUTED` — quote real, wrong page | 6 | **100%** [61–100] |
+| `QUOTE_MANIPULATION` — spliced/elided quote | 6 | **100%** [61–100] |
+| `UNSUPPORTED` — real quote, wrong claim *(no L3 judges configured)* | 6 | 0% [0–39] |
+| `FAKE_INDEPENDENCE` — redirect / canonical / syndicated duplicates | 5 | **0%** [0–43] |
+| `ATTRIBUTION_MISFRAMING` — verbatim quote, wrong speaker | 6 | 0% [0–39] |
+| **Clean controls — FALSE POSITIVES** | 32 | **38% wrongly flagged** [23–55] |
+
+**Overall: recall 51% [36–67] · precision 60% · F1 0.55.**
+
+### Read this before trusting the top row
+
+- **The 38% false-positive rate is the number that decides usability.** On a realistically
+  stratified corpus — JavaScript-rendered pages, PDFs, redirects, `<meta>`-only text — the tool
+  wrongly accuses roughly **2 in 5 honest citations**. Treat every flag as *"go look"*, never as
+  *"this is wrong."*
+- **`FAKE_INDEPENDENCE` at 0% was an unpredicted failure.** We expected the independence check to
+  work. It only catches the *same URL* repeated; the corpus used redirects, canonical variants
+  and syndicated copies, which are what real duplicate-sourcing looks like, and it caught none
+  of them.
+- **The 100% rows are the easy half of the problem.** They are string-matching wins, and the
+  intervals are wide at n=6.
+- `UNSUPPORTED` scored 0% because no L3 judges were configured for this run — that measures the
+  default configuration, not the ceiling.
+
 ## Scope: what this tool is actually for
 
 **`dissent` verifies *quoted* citations. Most real citations are not quoted.**
