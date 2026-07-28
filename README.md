@@ -92,36 +92,38 @@ own kind of wrong.
 
 ## Measured performance
 
-Self-test against a locked, content-hashed corpus of 68 cases (36 injected defects across 6
-classes, 32 stratified clean controls). Corpus, page hashes, labels and raw runner output are
-published for audit at `builds/op-003/` in the Delta repo. Wilson 95% intervals.
+Self-test against a locked, content-hashed corpus of 68 cases (36 injected defects, 32
+stratified clean controls), frozen before scoring. Corpus, page hashes, labels and raw output
+published for audit. Wilson 95% intervals. `v0.2` figures; `v0.1` shown where they differ.
 
-| Defect class | n | detected |
-|---|---|---|
-| `FABRICATED` — quote is on no page | 6 | **100%** [61–100] |
-| `MISATTRIBUTED` — quote real, wrong page | 6 | **100%** [61–100] |
-| `QUOTE_MANIPULATION` — spliced/elided quote | 6 | **100%** [61–100] |
-| `UNSUPPORTED` — real quote, wrong claim *(no L3 judges configured)* | 6 | 0% [0–39] |
-| `FAKE_INDEPENDENCE` — redirect / canonical / syndicated duplicates | 5 | **0%** [0–43] |
-| `ATTRIBUTION_MISFRAMING` — verbatim quote, wrong speaker | 6 | 0% [0–39] |
-| **Clean controls — FALSE POSITIVES** | 32 | **38% wrongly flagged** [23–55] |
+| Defect class | n | detected | v0.1 |
+|---|---|---|---|
+| `FABRICATED` — quote on no page | 6 | **100%** [61–100] | 100% |
+| `MISATTRIBUTED` — quote real, wrong page | 5 | **100%** [57–100] | 100% |
+| `QUOTE_MANIPULATION` — spliced/elided quote | 5 | **100%** [57–100] | 100% |
+| `FAKE_INDEPENDENCE` — redirect/canonical/syndicated dupes | 5 | **80%** [38–96] | **0%** |
+| `UNSUPPORTED` — real quote, wrong claim *(no L3 judges)* | 5 | 0% [0–43] | 0% |
+| `ATTRIBUTION_MISFRAMING` — verbatim quote, wrong speaker | 5 | 0% [0–43] | 0% |
+| **Clean controls — FALSE POSITIVES** | 29 | **34% wrongly flagged** [20–53] | 38% |
 
-**Overall: recall 51% [36–67] · precision 60% · F1 0.55.**
+**Overall: recall 65% [47–79] · precision 67% · F1 0.66** (v0.1: 51% / 60% / 0.55).
 
-### Read this before trusting the top row
+### The honest reading
 
-- **The 38% false-positive rate is the number that decides usability.** On a realistically
-  stratified corpus — JavaScript-rendered pages, PDFs, redirects, `<meta>`-only text — the tool
-  wrongly accuses roughly **2 in 5 honest citations**. Treat every flag as *"go look"*, never as
-  *"this is wrong."*
-- **`FAKE_INDEPENDENCE` at 0% was an unpredicted failure.** We expected the independence check to
-  work. It only catches the *same URL* repeated; the corpus used redirects, canonical variants
-  and syndicated copies, which are what real duplicate-sourcing looks like, and it caught none
-  of them.
-- **The 100% rows are the easy half of the problem.** They are string-matching wins, and the
-  intervals are wide at n=6.
-- `UNSUPPORTED` scored 0% because no L3 judges were configured for this run — that measures the
-  default configuration, not the ceiling.
+- **A 34% false-positive rate is still the dominant problem.** Roughly **1 in 3 honest
+  citations gets flagged**. Every flag means *"go look"* — never *"this is wrong."*
+- **The false-positive fix largely did not work.** v0.2 added an `UNVERIFIABLE` verdict so the
+  tool abstains on pages it cannot read instead of accusing them. It fired on only **3%** of
+  clean cases and moved the rate 38% → 34%. The heuristic thresholds are evidently too strict.
+  They have deliberately **not** been tuned against this corpus: tuning a detector against the
+  benchmark that grades it is how you manufacture a good score, and any change needs fresh
+  validation data.
+- **The independence fix did work: 0% → 80%.** v0.1 compared raw URL strings, so it only caught
+  a literally identical URL repeated. v0.2 canonicalises (www, tracking params, AMP, trailing
+  slash) and follows redirects, which is what real duplicate sourcing looks like.
+- **The 100% rows are the easy half of the problem**, at n≈5, with wide intervals.
+- Some cases score `stale` as cited pages change. Stale cases are excluded and reported, never
+  counted as passes.
 
 ## Scope: what this tool is actually for
 

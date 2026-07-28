@@ -41,7 +41,7 @@ import urllib.error
 import urllib.request
 from typing import Iterable
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 UA = "Mozilla/5.0 (compatible; dissent/0.1; +https://proiso.org/delta)"
 
@@ -76,6 +76,7 @@ class Citation:
     resolved: bool | None = None
     http_status: int | None = None
     verbatim: bool | None = None
+    unreadable: str | None = None   # why the page could not be read at all
     near_miss: str | None = None
     support: dict[str, str] = dataclasses.field(default_factory=dict)
     error: str | None = None
@@ -84,6 +85,13 @@ class Citation:
     def verdict(self) -> str:
         if self.resolved is False:
             return "UNRESOLVED"
+        # A page whose text we cannot read is NOT evidence of a bad citation.
+        # Conflating "the quote is absent" with "I cannot see this page" is what
+        # produced a 38% false-positive rate against honest citations on
+        # JavaScript-rendered pages, PDFs and app shells. Abstain instead of
+        # accusing: silence with a reason, not a verdict the reader will trust.
+        if self.unreadable:
+            return "UNVERIFIABLE"
         if self.verbatim is False:
             return "NOT_VERBATIM"
         if not self.support:
@@ -171,6 +179,28 @@ def fetch(url: str, timeout: int = 25) -> tuple[int | None, str, str | None]:
         return None, "", f"{type(e).__name__}: {e}"
 
 
+APP_SHELL = re.compile(
+    r'<div[^>]+id=["\'](?:root|__next|app|__nuxt)["\']|data-reactroot|__NEXT_DATA__|ng-version=',
+    re.IGNORECASE)
+
+
+def readability(raw: str, text: str) -> str | None:
+    """Can this page's text be read at all without executing JavaScript?
+
+    Returns a reason string when the answer is no. Being wrong here in the
+    cautious direction costs a missed detection; being wrong in the confident
+    direction costs a false accusation against an honest citation, which is
+    far more damaging to a verification tool's usefulness.
+    """
+    if len(raw) > 4000 and len(text) < 400:
+        return "page body appears to require JavaScript (almost no text in raw HTML)"
+    if APP_SHELL.search(raw) and len(text) < 1500:
+        return "single-page-app shell detected with little server-rendered text"
+    if raw.lstrip()[:5] == "%PDF-":
+        return "PDF content — text extraction not supported"
+    return None
+
+
 def check_citation(c: Citation) -> Citation:
     """L1 + L2. No model involved, no cost, fully deterministic."""
     status, raw, err = fetch(c.url)
@@ -186,9 +216,16 @@ def check_citation(c: Citation) -> Citation:
 
     if quote in page:
         c.verbatim = True
-    else:
-        c.verbatim = False
-        c.near_miss = best_window(page, quote)
+        return c
+
+    # Absent — but before accusing, ask whether we could read the page at all.
+    reason = readability(raw, page)
+    if reason:
+        c.unreadable = reason
+        return c
+
+    c.verbatim = False
+    c.near_miss = best_window(page, quote)
     return c
 
 
@@ -268,6 +305,42 @@ def parse(path: str) -> list[Citation]:
     return cites
 
 
+TRACKING = re.compile(r"^(utm_|fbclid|gclid|mc_cid|mc_eid|ref|source)", re.I)
+
+
+def canonical(url: str) -> str:
+    """Reduce a URL to an identity comparable across cosmetic variants.
+
+    Benchmarked at 0% on FAKE_INDEPENDENCE because the original check compared
+    raw URL strings, so it only ever caught a literally identical URL repeated
+    on one line. Real duplicate sourcing does not look like that -- it looks
+    like a redirect, an AMP or canonical variant, a www/non-www pair, or the
+    same article syndicated with tracking parameters attached.
+    """
+    from urllib.parse import urlsplit, parse_qsl, urlunsplit, urlencode
+    u = urlsplit(url.strip())
+    host = u.netloc.lower().removeprefix("www.").removesuffix(":443").removesuffix(":80")
+    path = re.sub(r"/(amp|amp\.html)$", "", u.path.rstrip("/")) or "/"
+    path = re.sub(r"\.(amp|html?)$", "", path)
+    query = urlencode(sorted((k, v) for k, v in parse_qsl(u.query) if not TRACKING.match(k)))
+    # No leading "//" — callers split on "/" to recover the host.
+    return f"{host}{path}" + (f"?{query}" if query else "")
+
+
+def resolve_final(url: str) -> str:
+    """Follow redirects and return the canonicalised destination.
+
+    A redirect and its target are ONE source. Costs one HEAD request; falls back
+    to the declared URL on any failure rather than guessing.
+    """
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return canonical(resp.url or url)
+    except Exception:  # noqa: BLE001
+        return canonical(url)
+
+
 def independence_report(cites: Iterable[Citation]) -> list[str]:
     """Flag claims whose 'independent' sources are not independent.
 
@@ -286,6 +359,24 @@ def independence_report(cites: Iterable[Citation]) -> list[str]:
         urls = [c.url for c in group]
         if len(set(urls)) < len(urls):
             problems.append(f"line {line}: same URL cited {len(urls)}x as if independent — one source, not {len(urls)}")
+        else:
+            # Cosmetically different URLs that resolve to the same place are
+            # still one source. This is the case the first version missed.
+            finals = {}
+            for c in group:
+                finals.setdefault(resolve_final(c.url), []).append(c.url)
+            for final, originals in finals.items():
+                if len(originals) > 1:
+                    problems.append(
+                        f"line {line}: {len(originals)} citations resolve to the SAME source "
+                        f"({final}) — redirect/canonical/syndicated variants are one source, not {len(originals)}"
+                    )
+            hosts = [canonical(c.url).split("/")[0] for c in group]
+            if len(set(hosts)) == 1 and len(hosts) > 1 and not any("SAME source" in p for p in problems[-2:]):
+                problems.append(
+                    f"line {line}: all {len(hosts)} citations are from the same host ({hosts[0]}) — "
+                    "same-publisher sources are not independent corroboration"
+                )
         tags = [c.tag for c in group]
         if len(set(tags)) == 1 and len(tags) > 1:
             problems.append(f"line {line}: {len(tags)} sources all tagged '{tags[0]}' — no type diversity")
@@ -298,7 +389,8 @@ def independence_report(cites: Iterable[Citation]) -> list[str]:
 # ---------------------------------------------------------------- reporting
 
 COLORS = {"UNRESOLVED": "\033[31m", "NOT_VERBATIM": "\033[31m", "DISPUTED": "\033[33m",
-          "UNSUPPORTED": "\033[31m", "SUPPORTED": "\033[32m", "VERBATIM": "\033[32m"}
+          "UNSUPPORTED": "\033[31m", "SUPPORTED": "\033[32m", "VERBATIM": "\033[32m",
+          "UNVERIFIABLE": "\033[33m"}
 
 
 def report(cites: list[Citation], problems: list[str], use_color: bool) -> int:
@@ -317,6 +409,9 @@ def report(cites: list[Citation], problems: list[str], use_color: bool) -> int:
         print(f"  url   : {c.url}")
         if c.error:
             print(f"  error : {c.error}")
+        if c.unreadable:
+            print(f"  ?? cannot verify: {c.unreadable}")
+            print("     (this is NOT an accusation — the citation may be perfectly good)")
         if c.verbatim is False:
             print("  !! quoted text does NOT appear on the page")
             print(f"  page  : {c.near_miss}" if c.near_miss else "  page  : no similar passage found")
