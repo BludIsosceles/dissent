@@ -41,7 +41,7 @@ import urllib.error
 import urllib.request
 from typing import Iterable
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 UA = "Mozilla/5.0 (compatible; dissent/0.1; +https://proiso.org/delta)"
 
@@ -128,7 +128,11 @@ def normalize(text: str) -> str:
         .replace("–", "-").replace("—", "-")
         .replace(" ", " ")
     )
-    return re.sub(r"\s+", " ", text).strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    # Collapse " ." -> "." so residual markup artefacts cannot break a match.
+    text = re.sub(r"\s+([,.;:!?%\)\]])", r"\1", text)
+    text = re.sub(r"([\(\[])\s+", r"\1", text)
+    return text.strip().lower()
 
 
 def strip_markup(raw: str) -> str:
@@ -146,6 +150,17 @@ def strip_markup(raw: str) -> str:
         re.IGNORECASE,
     )
     body = re.sub(r"(?is)<(script|style|noscript)\b.*?</\1>", " ", raw)
+    # Inline tags are removed WITHOUT a separator; block tags become whitespace.
+    #
+    # Replacing every tag with a space was the single largest source of false
+    # positives in the v0.2 benchmark: "made out of <em>components</em>." became
+    # "made out of components ." which no longer matches the sentence a human
+    # reads on the page. Any quoted sentence containing a link, emphasis or code
+    # span failed. Diagnosed by an independent adjudicator, not by us -- we had
+    # wrongly blamed JavaScript rendering.
+    body = re.sub(r"(?is)</?(?:a|em|strong|b|i|u|span|code|sup|sub|small|mark|abbr|cite|q|"
+                  r"time|label|var|kbd|samp|dfn|s|del|ins|font|tt|big|wbr|bdi|bdo|ruby|rt|rp)"
+                  r"(?:\s[^>]*)?>", "", body)
     body = re.sub(r"(?s)<[^>]+>", " ", body)
     return " ".join(metas) + " " + body
 

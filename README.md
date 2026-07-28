@@ -93,37 +93,55 @@ own kind of wrong.
 ## Measured performance
 
 Self-test against a locked, content-hashed corpus of 68 cases (36 injected defects, 32
-stratified clean controls), frozen before scoring. Corpus, page hashes, labels and raw output
-published for audit. Wilson 95% intervals. `v0.2` figures; `v0.1` shown where they differ.
+stratified clean controls), frozen before scoring. Corpus, page hashes, labels, adjudications
+and raw output published for audit. Wilson 95% intervals.
 
-| Defect class | n | detected | v0.1 |
+| Defect class | n | v0.3 detected |
+|---|---|---|
+| `FABRICATED` — quote on no page | 6 | **100%** [61–100] |
+| `MISATTRIBUTED` — quote real, wrong page | 5 | **100%** [57–100] |
+| `QUOTE_MANIPULATION` — spliced/elided quote | 6 | **100%** [61–100] |
+| `FAKE_INDEPENDENCE` — redirect/canonical/syndicated dupes | 6 | **83%** [44–97] |
+| `UNSUPPORTED` — real quote, wrong claim *(no L3 judges)* | 6 | 0% [0–39] |
+| `ATTRIBUTION_MISFRAMING` — verbatim quote, wrong speaker | 6 | 0% [0–39] |
+| **Clean controls — FALSE POSITIVES** | 30 | **23% wrongly flagged** [12–41] |
+
+| | v0.1 | v0.2 | **v0.3** |
 |---|---|---|---|
-| `FABRICATED` — quote on no page | 6 | **100%** [61–100] | 100% |
-| `MISATTRIBUTED` — quote real, wrong page | 5 | **100%** [57–100] | 100% |
-| `QUOTE_MANIPULATION` — spliced/elided quote | 5 | **100%** [57–100] | 100% |
-| `FAKE_INDEPENDENCE` — redirect/canonical/syndicated dupes | 5 | **80%** [38–96] | **0%** |
-| `UNSUPPORTED` — real quote, wrong claim *(no L3 judges)* | 5 | 0% [0–43] | 0% |
-| `ATTRIBUTION_MISFRAMING` — verbatim quote, wrong speaker | 5 | 0% [0–43] | 0% |
-| **Clean controls — FALSE POSITIVES** | 29 | **34% wrongly flagged** [20–53] | 38% |
+| False positives | 38% | 34% | **23%** |
+| Precision | 60% | 67% | **76%** |
+| Recall | 51% | 65% | 63% |
+| F1 | 0.55 | 0.66 | **0.69** |
 
-**Overall: recall 65% [47–79] · precision 67% · F1 0.66** (v0.1: 51% / 60% / 0.55).
+### How the biggest fix was found — and why we had it wrong
+
+The v0.1 false-positive rate was 38%. We diagnosed it as JavaScript-rendered pages and added an
+`UNVERIFIABLE` abstention. **That diagnosis was wrong**, and the fix moved the number only to
+34%.
+
+An independent adjudicator — not the tool's author, not the corpus author — was asked to rule
+whether each flagged clean case was a real tool failure or a mislabelled case. It ruled **10
+TOOL_LIMITATION / 2 CORPUS_ERROR**, confirming the failures were real, and then identified the
+actual cause:
+
+> *"react.dev/learn is server-rendered; the full sentence is in the raw HTML but split by inline
+> markup… After ordinary tag-stripping the citation matches verbatim. The tool's extractor
+> apparently failed on the `<em>` boundary."*
+
+The extractor replaced **every** tag with a space, so `made out of <em>components</em>.` became
+`made out of components .` — and any quoted sentence containing a link, emphasis or code span
+failed to match. Nothing to do with JavaScript. v0.3 removes inline tags without a separator
+and collapses stray space before punctuation: **38% → 23%.**
 
 ### The honest reading
 
-- **A 34% false-positive rate is still the dominant problem.** Roughly **1 in 3 honest
-  citations gets flagged**. Every flag means *"go look"* — never *"this is wrong."*
-- **The false-positive fix largely did not work.** v0.2 added an `UNVERIFIABLE` verdict so the
-  tool abstains on pages it cannot read instead of accusing them. It fired on only **3%** of
-  clean cases and moved the rate 38% → 34%. The heuristic thresholds are evidently too strict.
-  They have deliberately **not** been tuned against this corpus: tuning a detector against the
-  benchmark that grades it is how you manufacture a good score, and any change needs fresh
-  validation data.
-- **The independence fix did work: 0% → 80%.** v0.1 compared raw URL strings, so it only caught
-  a literally identical URL repeated. v0.2 canonicalises (www, tracking params, AMP, trailing
-  slash) and follows redirects, which is what real duplicate sourcing looks like.
-- **The 100% rows are the easy half of the problem**, at n≈5, with wide intervals.
-- Some cases score `stale` as cited pages change. Stale cases are excluded and reported, never
-  counted as passes.
+- **23% is still high.** Roughly **1 in 4 honest citations is flagged.** Every flag means
+  *"go look"*, never *"this is wrong."*
+- **Two classes remain at 0%** — attribution misframing, and unsupported claims without L3
+  judges configured.
+- **The 100% rows are the easy half** of the problem, at n≈6, with wide intervals.
+- Thresholds have **not** been tuned against this corpus. Tuning a detector against the
+  benchmark that grades it manufactures a score.
 
 ## Scope: what this tool is actually for
 
