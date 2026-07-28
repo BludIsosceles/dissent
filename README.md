@@ -102,7 +102,8 @@ and raw output published for audit. Wilson 95% intervals.
 | `MISATTRIBUTED` — quote real, wrong page | 5 | **100%** [57–100] |
 | `QUOTE_MANIPULATION` — spliced/elided quote | 6 | **100%** [61–100] |
 | `FAKE_INDEPENDENCE` — redirect/canonical/syndicated dupes | 6 | **83%** [44–97] |
-| `UNSUPPORTED` — real quote, wrong claim *(no L3 judges)* | 6 | 0% [0–39] |
+| `UNSUPPORTED` — real quote, wrong claim, **no L3 judges** | 6 | 0% [0–39] |
+| `UNSUPPORTED` — same class, **with 2 cross-family judges** | 5 | **100%** [57–100] |
 | `ATTRIBUTION_MISFRAMING` — verbatim quote, wrong speaker | 6 | 0% [0–39] |
 | **Clean controls — FALSE POSITIVES** | 30 | **23% wrongly flagged** [12–41] |
 
@@ -132,6 +133,20 @@ The extractor replaced **every** tag with a space, so `made out of <em>component
 `made out of components .` — and any quoted sentence containing a link, emphasis or code span
 failed to match. Nothing to do with JavaScript. v0.3 removes inline tags without a separator
 and collapses stray space before punctuation: **38% → 23%.**
+
+### Turning L3 on is a trade, not a free win
+
+The 0% above measures the **default configuration**, where no judges are configured — the layer
+was never exercised, not broken. Run with two cross-family judges (`swe` + `k3`) it detects
+**100%** [57–100] of unsupported-claim cases.
+
+It is not free. On the same run, false positives over clean controls rose to **43%** [16–75]
+(n=7, wide interval) against ~23% without judges — including a clean citation returned
+`DISPUTED` because the two judges split on it.
+
+**Operating guidance:** enable L3 when a missed defect costs more than a wasted human read.
+Leave it off when volume matters more than recall. `DISPUTED` means *the judges disagreed* —
+that is a signal to read it yourself, not a verdict.
 
 ### The honest reading
 
