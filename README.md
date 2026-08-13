@@ -103,7 +103,7 @@ and raw output published for audit. Wilson 95% intervals.
 | `QUOTE_MANIPULATION` — spliced/elided quote | 6 | **100%** [61–100] |
 | `FAKE_INDEPENDENCE` — redirect/canonical/syndicated dupes | 6 | **83%** [44–97] |
 | `UNSUPPORTED` — real quote, wrong claim, **no L3 judges** | 6 | 0% [0–39] |
-| `UNSUPPORTED` — same class, **with 2 cross-family judges** | 5 | **100%** [57–100] |
+| `UNSUPPORTED` — with 2 cross-family judges | — | **WITHDRAWN — see below** |
 | `ATTRIBUTION_MISFRAMING` — verbatim quote, wrong speaker | 6 | 0% [0–39] |
 | **Clean controls — FALSE POSITIVES** | 30 | **23% wrongly flagged** [12–41] |
 
@@ -147,50 +147,35 @@ The extractor replaced **every** tag with a space, so `made out of <em>component
 failed to match. Nothing to do with JavaScript. v0.3 removes inline tags without a separator
 and collapses stray space before punctuation: **38% → 23%.**
 
-### Turning L3 on is a trade, not a free win
+### All L3 numbers are WITHDRAWN (2026-08-12)
 
-The 0% above measures the **default configuration**, where no judges are configured — the layer
-was never exercised, not broken. Run with two cross-family judges (`swe` + `k3`) it detects
-**100%** [57–100] of unsupported-claim cases.
+An external adversarial ruling found — and Delta reproduced, 10/10 — that the judge vote parser
+substring-scanned the whole transcript instead of honouring its own first-line contract. The
+consequences were not subtle:
 
-It is not free. On the same run, false positives over clean controls rose to **43%** [16–75]
-(n=7, wide interval) against ~23% without judges — including a clean citation returned
-`DISPUTED` because the two judges split on it.
+- **`parse_vote("UNSUPPORTED")` returned `SUPPORTS`.** The tool's own negative verdict label
+  voted positive, because `SUPPORT` is a substring of `UNSUPPORTED`.
+- A correct verdict followed by a natural caveat flipped to the opposite vote.
+- An explicit abstention was counted as a yes.
+- Reasoning preamble from a judge CLI — noise this project documents in `quorum`'s own roster —
+  flipped verdicts.
 
-**Operating guidance:** enable L3 when a missed defect costs more than a wasted human read.
-Leave it off when volume matters more than recall. `DISPUTED` means *the judges disagreed* —
-that is a signal to read it yourself, not a verdict.
+Separately, degraded quorums presented as consensus: one judge voting while another errored
+produced the same label as genuine agreement, and **when every judge failed the verdict fell back
+to `VERBATIM`, unflagged, exit 0** — a totally failed L3 run was indistinguishable from one where
+L3 was never requested.
 
-### The 7% figure is IN-SAMPLE — do not rely on it
+**Every previously published L3 figure was produced through that parser and is withdrawn:**
+`UNSUPPORTED` detection 100% [57–100], the 43% L3 false-positive rate, and the clean-control
+`DISPUTED` case.
 
-Flagged by an external reviewer with no stake in Delta's outcomes, checked, and confirmed:
+**They cannot be re-scored.** The reviewer proposed a zero-cost re-score against published raw
+judge transcripts. Delta had claimed to publish raw output for audit and, on checking, **had
+never persisted the judge transcripts at all** — they were parsed and discarded. So the evidence
+behind those numbers no longer exists. An audit trail that is claimed but not written is worse
+than one never claimed. v0.5 persists transcripts; the L3 rows return only when re-measured.
 
-**The same 30 clean controls were used to diagnose each false-positive mechanism AND to verify
-each repair.** Four rounds of that (38% → 34% → 23% → 7%) makes the final figure a *fit
-statistic*, not an accuracy estimate. Stated plainly: **7% of 30 is two cases** — "two of the
-thirty controls we tuned against still flag." The published interval [2–22] already says the
-sample cannot distinguish 7% from 22%. **Out-of-sample false positives are unknown and
-plausibly higher.** A fresh, never-diagnosed control set is required before this number gates
-any decision.
-
-**It is also sensitive to exclusion choices.** Counting all 32 controls including ones the
-runner marks stale gives **16%**, not 7%. Both are defensible — 7% excludes cases whose source
-page has since decayed; 16% is closer to what a user actually experiences — but they are
-different quantities and only one was headlined.
-
-**False positives are strongly population-dependent**, which the version table hides:
-
-| Page type | n | FP |
-|---|---|---|
-| Long documents | 5 | **40%** |
-| Redirect / canonical | 5 | 20% |
-| JavaScript-rendered | 6 | 17% |
-| Static HTML | 8 | 12% |
-| `<meta>`-only | 5 | 0% |
-| PDF / non-HTML | 3 | 0% |
-
-A 0%–40% spread means any single headline FP number is a property of the *corpus mix*, not of
-the tool. Expect a different rate on your documents.
+Both defects are fixed in v0.5 and the reviewer's repro suite is now the regression suite.
 
 ### The honest reading
 

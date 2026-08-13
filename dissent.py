@@ -42,14 +42,18 @@ import urllib.error
 import urllib.request
 from typing import Iterable
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 UA = "Mozilla/5.0 (compatible; dissent/0.1; +https://proiso.org/delta)"
 
 # [tag] https://url — "quoted text"   (em dash, en dash, or double hyphen)
 CITATION_RE = re.compile(
     r"\[(?P<tag>[a-z_]+)\]\s*"
-    r"(?P<url>https?://[^\s\)\]>]+?)\s*"
+    # Balanced parens are legal and common (Wikipedia disambiguation). The old
+    # atom excluded ')' outright, so the WHOLE citation failed to match and the
+    # citation was neither verified nor flagged nor counted -- silence on
+    # citations in the tool's own format.
+    r"(?P<url>https?://(?:[^\s\]>]*?\([^\s\)]*\))*[^\s\)\]>]*?)\s*"
     r"(?:—|–|--)\s*"
     r"[\"“](?P<quote>[^\"”]+)[\"”]",
     re.IGNORECASE,
@@ -80,6 +84,13 @@ class Citation:
     unreadable: str | None = None   # why the page could not be read at all
     near_miss: str | None = None
     support: dict[str, str] = dataclasses.field(default_factory=dict)
+    # Raw judge transcripts, kept so an L3 verdict can be re-derived later.
+    # These were previously parsed and DISCARDED, which meant every published
+    # L3 number rested on evidence that no longer existed -- so when the vote
+    # parser was found to invert votes, nothing could be re-scored and the
+    # numbers had to be withdrawn instead of corrected. An audit trail that is
+    # claimed but not written is worse than one never claimed.
+    transcripts: dict[str, str] = dataclasses.field(default_factory=dict)
     error: str | None = None
 
     @property
@@ -97,14 +108,27 @@ class Citation:
             return "NOT_VERBATIM"
         if not self.support:
             return "VERBATIM"
+        # Quorum arithmetic. Previously ERROR/UNCLEAR entries were filtered out
+        # and whatever survived was presented as consensus, so one judge voting
+        # while another errored produced the SAME label as genuine cross-family
+        # agreement -- and if EVERY judge failed the verdict fell back to
+        # VERBATIM, unflagged, exit 0. A fully failed L3 run was indistinguishable
+        # from one where L3 was never requested. That is this project's own rule
+        # from quorum's header recurring one layer up: silence is a result, not
+        # a pass.
+        configured = len(self.support)
         votes = [v for v in self.support.values() if v in ("SUPPORTS", "DOES_NOT_SUPPORT")]
         if not votes:
-            return "VERBATIM"
+            return "JUDGES-FAILED"
         if all(v == "SUPPORTS" for v in votes):
-            return "SUPPORTED"
-        if all(v == "DOES_NOT_SUPPORT" for v in votes):
-            return "UNSUPPORTED"
-        return "DISPUTED"
+            base = "SUPPORTED"
+        elif all(v == "DOES_NOT_SUPPORT" for v in votes):
+            base = "UNSUPPORTED"
+        else:
+            return "DISPUTED"
+        if len(votes) < configured:
+            return f"{base}-DEGRADED"
+        return base
 
     @property
     def dissent(self) -> bool:
@@ -330,12 +354,37 @@ def judge_cli(claim: str, quote: str, url: str, argv: list[str]) -> str:
 
 
 def parse_vote(text: str) -> str:
-    t = (text or "").upper()
-    # Order matters: DOES_NOT_SUPPORT contains SUPPORT as a substring.
-    for token in ("DOES_NOT_SUPPORT", "DOES NOT SUPPORT"):
-        if token in t:
+    """Parse a judge vote from the FIRST non-empty line, by exact token.
+
+    The previous implementation substring-scanned the whole transcript, which
+    an external adversarial ruling reproduced as four distinct inversions:
+
+      * "UNSUPPORTED" -> SUPPORTS. The tool's OWN negative verdict label voted
+        positive, because "SUPPORT" is a substring of "UNSUPPORTED". The old
+        guard knew about the substring hazard and stopped one token short of
+        the vocabulary's own negative form.
+      * A correct SUPPORTS verdict followed by a caveat ("...though it does not
+        support the price figure") flipped to DOES_NOT_SUPPORT.
+      * An explicit abstention was drafted into voting as SUPPORTS.
+      * A kimi-style reasoning preamble ahead of the verdict flipped it — noise
+        this project documents in quorum's own roster and did not filter here.
+
+    The prompt already demands the verdict on the first line. Honour that
+    contract instead of scanning prose, and refuse anything not an exact token.
+    """
+    for raw in (text or "").splitlines():
+        line = raw.strip().strip("*`_#-").strip()
+        if not line:
+            continue
+        tok = re.sub(r"[^A-Z_ ]", "", line.upper()).strip().replace(" ", "_")
+        if tok.startswith("DOES_NOT_SUPPORT") or tok.startswith("DOESNT_SUPPORT"):
             return "DOES_NOT_SUPPORT"
-    return "SUPPORTS" if "SUPPORT" in t else "UNCLEAR"
+        if tok.startswith("UNSUPPORTED"):      # the tool's own negative label
+            return "DOES_NOT_SUPPORT"
+        if tok.startswith("SUPPORTS") or tok.startswith("SUPPORTED"):
+            return "SUPPORTS"
+        return "UNCLEAR"                       # first line was not a verdict
+    return "UNCLEAR"
 
 
 # ---------------------------------------------------------------- parsing
@@ -393,6 +442,7 @@ def resolve_final(url: str) -> str:
 
 
 def independence_report(cites: Iterable[Citation]) -> list[str]:
+    cites = list(cites)   # iterated twice below; a generator silently emptied
     """Flag claims whose 'independent' sources are not independent.
 
     Two citations on the same line pointing at the same URL are one source
@@ -441,7 +491,8 @@ def independence_report(cites: Iterable[Citation]) -> list[str]:
 
 COLORS = {"UNRESOLVED": "\033[31m", "NOT_VERBATIM": "\033[31m", "DISPUTED": "\033[33m",
           "UNSUPPORTED": "\033[31m", "SUPPORTED": "\033[32m", "VERBATIM": "\033[32m",
-          "UNVERIFIABLE": "\033[33m"}
+          "UNVERIFIABLE": "\033[33m", "JUDGES-FAILED": "\033[31m",
+          "SUPPORTED-DEGRADED": "\033[33m", "UNSUPPORTED-DEGRADED": "\033[33m"}
 
 
 def report(cites: list[Citation], problems: list[str], use_color: bool) -> int:
@@ -518,8 +569,10 @@ def main() -> int:
                     raw = (judge_local(c.claim, c.quote, c.url, spec.split(":", 1)[1], args.endpoint)
                            if spec.startswith("local:")
                            else judge_cli(c.claim, c.quote, c.url, spec.split()))
+                    c.transcripts[name] = raw
                     c.support[name] = parse_vote(raw)
                 except Exception as e:  # noqa: BLE001
+                    c.transcripts[name] = f"ERROR: {type(e).__name__}: {e}"
                     c.support[name] = f"ERROR ({type(e).__name__})"
 
             with futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
