@@ -42,18 +42,19 @@ import urllib.error
 import urllib.request
 from typing import Iterable
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 UA = "Mozilla/5.0 (compatible; dissent/0.1; +https://proiso.org/delta)"
 
 # [tag] https://url — "quoted text"   (em dash, en dash, or double hyphen)
 CITATION_RE = re.compile(
     r"\[(?P<tag>[a-z_]+)\]\s*"
-    # Balanced parens are legal and common (Wikipedia disambiguation). The old
-    # atom excluded ')' outright, so the WHOLE citation failed to match and the
-    # citation was neither verified nor flagged nor counted -- silence on
-    # citations in the tool's own format.
-    r"(?P<url>https?://(?:[^\s\]>]*?\([^\s\)]*\))*[^\s\)\]>]*?)\s*"
+    # Do NOT parse URL syntax with a regex. Parens are legal and common
+    # (Wikipedia disambiguation), may nest, and may appear UNBALANCED -- and a
+    # balanced-paren pattern both drops those URLs and can backtrack
+    # catastrophically on adversarial input. The citation delimiter is the only
+    # thing that ends a URL in this format, so run to it in linear time.
+    r"(?P<url>https?://(?:(?!\s*(?:—|–|--)).)*?)\s*"
     r"(?:—|–|--)\s*"
     r"[\"“](?P<quote>[^\"”]+)[\"”]",
     re.IGNORECASE,
@@ -353,6 +354,17 @@ def judge_cli(claim: str, quote: str, url: str, argv: list[str]) -> str:
     return out.stdout
 
 
+VOTE_MAP = {
+    "SUPPORTS": "SUPPORTS",
+    "SUPPORTED": "SUPPORTS",
+    "DOES_NOT_SUPPORT": "DOES_NOT_SUPPORT",
+    "DOESNT_SUPPORT": "DOES_NOT_SUPPORT",
+    "DOES_NOT_SUPPORTED": "DOES_NOT_SUPPORT",
+    "UNSUPPORTED": "DOES_NOT_SUPPORT",
+    "NOT_SUPPORTED": "DOES_NOT_SUPPORT",
+}
+
+
 def parse_vote(text: str) -> str:
     """Parse a judge vote from the FIRST non-empty line, by exact token.
 
@@ -377,13 +389,15 @@ def parse_vote(text: str) -> str:
         if not line:
             continue
         tok = re.sub(r"[^A-Z_ ]", "", line.upper()).strip().replace(" ", "_")
-        if tok.startswith("DOES_NOT_SUPPORT") or tok.startswith("DOESNT_SUPPORT"):
-            return "DOES_NOT_SUPPORT"
-        if tok.startswith("UNSUPPORTED"):      # the tool's own negative label
-            return "DOES_NOT_SUPPORT"
-        if tok.startswith("SUPPORTS") or tok.startswith("SUPPORTED"):
-            return "SUPPORTS"
-        return "UNCLEAR"                       # first line was not a verdict
+        # EXACT membership, not startswith. A cross-family reviewer caught that
+        # the first repair still inverted votes -- in the opposite direction:
+        # "SUPPORTS, though it does not support the price figure" sanitises to
+        # SUPPORTS_THOUGH_IT_DOES_NOT_SUPPORT... and startswith("SUPPORTS")
+        # returned a positive vote. startswith IS a substring test, merely
+        # anchored at the front. The same-family reviewer that proposed the
+        # first-line fix missed this because it shared the author's assumption
+        # that first-line + sanitisation equals safe.
+        return VOTE_MAP.get(tok, "UNCLEAR")
     return "UNCLEAR"
 
 

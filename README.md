@@ -175,7 +175,17 @@ never persisted the judge transcripts at all** — they were parsed and discarde
 behind those numbers no longer exists. An audit trail that is claimed but not written is worse
 than one never claimed. v0.5 persists transcripts; the L3 rows return only when re-measured.
 
-Both defects are fixed in v0.5 and the reviewer's repro suite is now the regression suite.
+Both defects are fixed, and the reviewer's repro suite is now the regression suite.
+
+**v0.6 — the first repair was itself wrong, and cross-family review caught it.** The same-family
+reviewer proposed first-line parsing; the implementation used `startswith`, which **still
+inverted votes, in the opposite direction**: `"SUPPORTS, though it does not support the price
+figure"` returned `SUPPORTS`. A cross-family (non-anthropic) reviewer found it and named why the
+same-family read missed it — *"it shares the author's assumption that first-line plus
+sanitisation equals safe; `startswith` IS a substring test, merely anchored at the front."* v0.6
+uses exact enum membership. The same review also replaced the balanced-paren URL regex, which
+dropped nested parens, dropped legal unbalanced `)`, and could backtrack catastrophically, with
+a linear-time match to the citation delimiter.
 
 ### The honest reading
 
