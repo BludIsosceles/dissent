@@ -42,6 +42,21 @@ vendor's own marketing: `official_vendor`, `regulatory_tos`, `marketplace_listin
 
 The surrounding line is treated as the claim.
 
+**Optional metadata suffix (v0.8).** Endnote-style citations often carry a title, date,
+publisher or author — and those are forgeable independently of the quote. A fabricated endnote
+can quote a real page accurately while attributing it to an author and date that do not exist.
+Supply them and they get checked against the page's own `<title>`, og/JSON-LD/citation metadata,
+dates and bylines:
+
+```
+[third_party_analysis] https://example.com — "the exact sentence"
+  {title="Digital Transformation Overview", date="2024-03-11", publisher="Example", author="A. Name"}
+```
+
+Mismatches flag as `TITLE_MISMATCH`, `DATE_MISMATCH` and so on; anything the page does not
+publish comes back `*_UNCHECKED` and **never accuses**. Lines without the suffix parse exactly
+as they did in v0.7.
+
 ## Layer 3 — cross-family judges
 
 Add judges. Repeat the flag for more. Use *different model families* — a model checking its
@@ -90,112 +105,63 @@ lives in another site's `<meta description>`. `dissent` parses meta tags precise
 legitimate quotes often live in text that never visibly renders, and calling those fake is its
 own kind of wrong.
 
-## Measured performance
+## Measured performance — external benchmark (v0.8)
 
-Self-test against a locked, content-hashed corpus of 68 cases (36 injected defects, 32
-stratified clean controls), frozen before scoring. Corpus, page hashes, labels, adjudications
-and raw output published for audit. Wilson 95% intervals.
+Earlier versions were measured only against a corpus this project built and tuned against, and
+that number was published with a standing warning that it was in-sample. **v0.8 was measured
+against an outside dataset instead**: 45 endnotes from a published KPMG proof audit, with
+[GPTZero](https://gptzero.me)'s independent labels and matched sources — citations neither
+written nor selected by this project.
 
-| Defect class | n | v0.3 detected |
+| What was measured | v0.7 | **v0.8** |
 |---|---|---|
-| `FABRICATED` — quote on no page | 6 | **100%** [61–100] |
-| `MISATTRIBUTED` — quote real, wrong page | 5 | **100%** [57–100] |
-| `QUOTE_MANIPULATION` — spliced/elided quote | 6 | **100%** [61–100] |
-| `FAKE_INDEPENDENCE` — redirect/canonical/syndicated dupes | 6 | **83%** [44–97] |
-| `UNSUPPORTED` — real quote, wrong claim, **no L3 judges** | 6 | 0% [0–39] |
-| `UNSUPPORTED` — with 2 cross-family judges | — | **WITHDRAWN — see below** |
-| `ATTRIBUTION_MISFRAMING` — verbatim quote, wrong speaker | 6 | 0% [0–39] |
-| **Clean controls — FALSE POSITIVES** | 30 | **23% wrongly flagged** [12–41] |
+| Working pages wrongly accused (101 verified live passages) | 18 (18%) | **6 (6%)** |
+| Same, against archive copies | 12 | **0** |
+| Fabricated titles / dates / authors caught (GPTZero "Hallucination" + "Unsure") | 0 | **19 of 25** end-to-end |
+| Citations GPTZero marked "Does not support", hard-flagged | 11 of 12 | **11 of 12** |
 
-| | v0.1 | v0.2 | v0.3 | **v0.4** |
-|---|---|---|---|---|
-| False positives | 38% | 34% | 23% | **7%** [2–22] |
-| Precision | 60% | 67% | 76% | **88%** |
-| Recall | 51% | 65% | **63%** | 45% |
-| F1 | 0.55 | 0.66 | **0.69** | 0.60 |
+The 6 remaining accusations are all defensible: three Walmart passages behind a genuine 404, and
+three Intesa passages where the live page was rewritten after the archive copy was taken (the
+archive copy verifies 3/3). A Wayback fallback for changed pages is the follow-up.
 
-**v0.4 is not simply better than v0.3 — it is a more cautious operating point.**
-Fixing four false-positive mechanisms (quote-character equivalence, a 4 MB read cap that hid
-quotes deep in long documents, order-dependent meta parsing, and bot-block responses being
-reported as fabrication) cut false positives 23% → 7%. But abstention is not free: every page
-the tool now declines to judge is a page where it also cannot catch a *real* fabrication.
-`FABRICATED` fell 100% → 67% and `MISATTRIBUTED` 100% → 40%, because a fabricated citation to a
-bot-blocked or unreadable page now returns `UNVERIFIABLE` rather than `NOT_VERBATIM`.
-**Precision rose because the tool says less. F1 fell.**
+### Three model families, and where they disagree
 
-Choose the version by what your errors cost: **v0.4 for low false-alarm work** where a wasted
-human read is expensive; **v0.3 for maximum recall** where a missed fabrication is worse than a
-false alarm.
+L3 verdicts were re-run by judges outside the authoring family — grok-4.7, and Qwen3.8-27B on a
+local vLLM — because every prior L3 number had a Claude judge behind it.
 
-### How the biggest fix was found — and why we had it wrong
+- **grok agrees with the Claude verdict class on 30 of 35 claims.**
+- On the six citations GPTZero passed as "Support" but `dissent` hard-flags, **Claude and grok
+  both hard-flag all six; Qwen splits on all six** (supported, partial, or no parsed vote).
+- That split is published rather than resolved. The adjudication file transcribes all three
+  columns and explicitly **rules on none of them**, because the desk assembling it was also
+  Claude and could not adjudicate a dispute it was a party to.
 
-The v0.1 false-positive rate was 38%. We diagnosed it as JavaScript-rendered pages and added an
-`UNVERIFIABLE` abstention. **That diagnosis was wrong**, and the fix moved the number only to
-34%.
+### A claim we withdrew
 
-An independent adjudicator — not the tool's author, not the corpus author — was asked to rule
-whether each flagged clean case was a real tool failure or a mislabelled case. It ruled **10
-TOOL_LIMITATION / 2 CORPUS_ERROR**, confirming the failures were real, and then identified the
-actual cause:
+v0.8 added a `PARTIAL` vote, and an earlier draft of these results reported that it **reduced
+over-flagging** — hard flags on GPTZero-"Support" citations falling from 9 of 12 to 6 of 12.
 
-> *"react.dev/learn is server-rendered; the full sentence is in the raw HTML but split by inline
-> markup… After ordinary tag-stripping the citation matches verbatim. The tool's extractor
-> apparently failed on the `<em>` boundary."*
+**That is withdrawn as a general claim.** The improvement came from prompt wording fitted to
+Claude on this benchmark; grok hard-flags those same citations 9 of 12, exactly the v0.7 figure.
+The reduction does not carry across families, so it was a Claude-only result reported as a
+property of the tool. The verdict change itself stands — `PARTIALLY_SUPPORTED` names which part
+of a claim the source does not carry, and never passes a claim silently.
 
-The extractor replaced **every** tag with a space, so `made out of <em>components</em>.` became
-`made out of components .` — and any quoted sentence containing a link, emphasis or code span
-failed to match. Nothing to do with JavaScript. v0.3 removes inline tags without a separator
-and collapses stray space before punctuation: **38% → 23%.**
+**Also not held-out:** the L3 prompt's run 2 was tuned after reading run 1 on this same
+benchmark. A held-out set is owed before any L3 number here should be treated as predictive.
 
-### All L3 numbers are WITHDRAWN (2026-08-12)
+### What v0.8 changed
 
-An external adversarial ruling found — and Delta reproduced, 10/10 — that the judge vote parser
-substring-scanned the whole transcript instead of honouring its own first-line contract. The
-consequences were not subtle:
-
-- **`parse_vote("UNSUPPORTED")` returned `SUPPORTS`.** The tool's own negative verdict label
-  voted positive, because `SUPPORT` is a substring of `UNSUPPORTED`.
-- A correct verdict followed by a natural caveat flipped to the opposite vote.
-- An explicit abstention was counted as a yes.
-- Reasoning preamble from a judge CLI — noise this project documents in `quorum`'s own roster —
-  flipped verdicts.
-
-Separately, degraded quorums presented as consensus: one judge voting while another errored
-produced the same label as genuine agreement, and **when every judge failed the verdict fell back
-to `VERBATIM`, unflagged, exit 0** — a totally failed L3 run was indistinguishable from one where
-L3 was never requested.
-
-**Every previously published L3 figure was produced through that parser and is withdrawn:**
-`UNSUPPORTED` detection 100% [57–100], the 43% L3 false-positive rate, and the clean-control
-`DISPUTED` case.
-
-**They cannot be re-scored.** The reviewer proposed a zero-cost re-score against published raw
-judge transcripts. Delta had claimed to publish raw output for audit and, on checking, **had
-never persisted the judge transcripts at all** — they were parsed and discarded. So the evidence
-behind those numbers no longer exists. An audit trail that is claimed but not written is worse
-than one never claimed. v0.5 persists transcripts; the L3 rows return only when re-measured.
-
-Both defects are fixed, and the reviewer's repro suite is now the regression suite.
-
-**v0.6 — the first repair was itself wrong, and cross-family review caught it.** The same-family
-reviewer proposed first-line parsing; the implementation used `startswith`, which **still
-inverted votes, in the opposite direction**: `"SUPPORTS, though it does not support the price
-figure"` returned `SUPPORTS`. A cross-family (non-anthropic) reviewer found it and named why the
-same-family read missed it — *"it shares the author's assumption that first-line plus
-sanitisation equals safe; `startswith` IS a substring test, merely anchored at the front."* v0.6
-uses exact enum membership. The same review also replaced the balanced-paren URL regex, which
-dropped nested parens, dropped legal unbalanced `)`, and could backtrack catastrophically, with
-a linear-time match to the citation delimiter.
-
-### The honest reading
-
-- **23% is still high.** Roughly **1 in 4 honest citations is flagged.** Every flag means
-  *"go look"*, never *"this is wrong."*
-- **Two classes remain at 0%** — attribution misframing, and unsupported claims without L3
-  judges configured.
-- **The 100% rows are the easy half** of the problem, at n≈6, with wide intervals.
-- Thresholds have **not** been tuned against this corpus. Tuning a detector against the
-  benchmark that grades it manufactures a score.
+- **Fetch** — a server refusing the client (401/403/429/503, or a 4xx that turns 200 for a
+  browser UA) is now `UNVERIFIABLE`, never `UNRESOLVED`; gzip/deflate; PDF text extraction;
+  charset from `<meta>`; timeouts abstain. *39 tests.*
+- **Metadata** — optional `{title=…, date=…, publisher=…, author=…}` after a quote, checked
+  against the page's own title, og/JSON-LD/citation meta, dates and bylines. `*_MISMATCH` flags;
+  `*_UNCHECKED` never accuses. This is what catches fabricated endnotes whose *quote* is fine.
+  *16 tests.*
+- **L3** — `PARTIAL` vote with exact-token parsing, judge reasoning printed in the report, and
+  one `FLAGGED` set fixing a latent bug where `UNSUPPORTED-DEGRADED` and `JUDGES-FAILED` exited
+  **0**. *83 checks.*
 
 ## Scope: what this tool is actually for
 
