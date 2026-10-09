@@ -1156,7 +1156,7 @@ def _with_retry(fn, tries: int = 2):
 
 
 def _cdx(url: str, timeout: int) -> list[tuple[str, str]]:
-    q = urllib.parse.urlencode({"url": url, "output": "json", "filter": "statuscode:200",
+    q = urllib.parse.urlencode({"url": url, "matchType": "exact", "output": "json", "filter": "statuscode:200",
                                 "fl": "timestamp,original,digest", "limit": "-200"})
     req = urllib.request.Request(f"{WAYBACK_CDX}?{q}", headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -1218,6 +1218,10 @@ def check_archive(c: Citation) -> Citation:
     except Exception as e:  # noqa: BLE001
         c.archive_note = f"archive not consulted: {type(e).__name__}: {e}"[:200]
         return c
+    # Only captures OF THE CITED PAGE count. The index is asked for an exact match,
+    # but a row naming another page would launder that page's text into evidence
+    # for this one (luna confirmation read), so every row is checked here too.
+    snaps = [(ts, o) for ts, o in snaps if _page_key(o) == _page_key(url)]
     if not snaps:
         c.archive_note = "no archived copy exists"
         return c
@@ -2051,7 +2055,7 @@ def main() -> int:
     with futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         cites = list(pool.map(check_citation, cites))
         if args.wayback:     # few workers: archive.org rate-limits, and only accused citations go
-            _ARCHIVE_CACHE.clear()
+            _ARCHIVE_CACHE.clear(); _ARCHIVE_LOCKS.clear()
             with futures.ThreadPoolExecutor(max_workers=2) as apool:
                 cites = list(apool.map(check_archive, cites))
 

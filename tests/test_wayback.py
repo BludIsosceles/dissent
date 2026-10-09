@@ -139,6 +139,14 @@ def redirect_to_another_page_is_not_evidence():
     c = D.check_archive(cite(resolved=False, http_status=404))
     assert c.verdict == "ARCHIVED_ONLY", f"same page (scheme/www/slash differ) refused: {c.archive_note}"
 
+def other_pages_rows_are_not_evidence():
+    rows = [("20200101000000", "https://evil.example/results"), ("20210101000000", "https://bank.example/other")]
+    archive(rows, {ts: PAGE_WITH for ts, _ in rows},
+            final={ts: f"https://web.archive.org/web/{ts}id_/{o}" for ts, o in rows})
+    c = D.check_archive(cite(resolved=True, verbatim=False))
+    assert c.verdict == "NOT_VERBATIM" and c.archive_note == "no archived copy exists", (c.verdict, c.archive_note)
+    assert not any(k == "get" for k, _ in calls), f"another page's copy was fetched: {calls}"
+
 def fragment_not_sent():
     archive(SNAPS, {ts: PAGE_WITH for ts, _ in SNAPS})
     D.check_archive(cite(resolved=True, verbatim=False, url="https://bank.example/results#q3"))
@@ -242,6 +250,7 @@ for n, f in [("rewritten page: quote found in an older copy", rewritten_page_fou
              ("an exception on one copy never aborts", snapshot_exception_does_not_abort),
              ("replay redirected elsewhere is not evidence", redirect_to_another_page_is_not_evidence),
              ("fragment is not sent to the archive", fragment_not_sent),
+             ("another page's capture is not evidence", other_pages_rows_are_not_evidence),
              ("CLI: --wayback --json end to end", cli_wayback_json_end_to_end)]:
     case(n, f)
 print(f"---\ntests_run: {run}\ntests_failed: {failed}\n---")
