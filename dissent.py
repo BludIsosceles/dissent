@@ -1198,7 +1198,8 @@ def _page_key(url: str) -> str:
     """Same page for the archive's purposes. Ignored: http vs https (archives often
     hold the http capture of an https page), the default ports 80/443, a leading
     www., a trailing slash, a fragment, host case. KEPT: any other port and any
-    userinfo -- a different port is a different service (luna confirmation read)."""
+    userinfo -- a different port is a different service (luna confirmation read).
+    URLs carrying userinfo never reach this comparison: check_archive skips them."""
     u = urllib.parse.urlsplit(urllib.parse.urldefrag(url)[0])
     host = (u.hostname or "").lower().removeprefix("www.")
     try:
@@ -1206,8 +1207,7 @@ def _page_key(url: str) -> str:
     except ValueError:
         return "invalid:" + url                # unparseable port: matches nothing else
     port = "" if port in (None, 80, 443) else f":{port}"
-    user = f"{u.username}@" if u.username is not None else ""
-    return f"{user}{host}{port}{u.path.rstrip('/') or ''}" + (f"?{u.query}" if u.query else "")
+    return f"{host}{port}{u.path.rstrip('/') or ''}" + (f"?{u.query}" if u.query else "")
 
 
 def check_archive(c: Citation) -> Citation:
@@ -1220,6 +1220,9 @@ def check_archive(c: Citation) -> Citation:
         return c                               # nothing accused, or a DNS/connection failure
     if original_url(c.url) != c.url:
         return c                               # already an archive link
+    if "@" in (urllib.parse.urlsplit(c.url).netloc or ""):
+        c.archive_note = "archive not consulted: the URL carries credentials, so no capture can be shown to be the same page"
+        return c
     url = urllib.parse.urldefrag(c.url)[0]     # a fragment is never sent to a server
     try:
         snaps = wayback_snapshots(url)
@@ -1253,6 +1256,15 @@ def check_archive(c: Citation) -> Citation:
             live = (f"live page HTTP {c.http_status}" if c.resolved is False
                     else "live page no longer contains it")
             c.archive_note = f"quote found in archived copy of {ts[:4]}-{ts[4:6]}-{ts[6:8]}; {live}"
+            # Merged variants are disclosed, never silent: an http capture, or the
+            # www./bare twin, is a different origin from the one cited.
+            cu, ou = urllib.parse.urlsplit(url), urllib.parse.urlsplit(orig)
+            diffs = [f"captured over {ou.scheme}, cited over {cu.scheme}"] if cu.scheme != ou.scheme else []
+            if (cu.hostname or "").lower() != (ou.hostname or "").lower():
+                diffs.append(f"captured host {ou.hostname}, cited host {cu.hostname}")
+            if diffs:
+                c.archived["variant"] = "; ".join(diffs)
+                c.archive_note += f" (VARIANT: {'; '.join(diffs)})"
             return c
     skipped = "".join([f"; {unreadable} unreadable" if unreadable else "",
                        f"; {elsewhere} redirected to another page" if elsewhere else ""])

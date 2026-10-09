@@ -152,10 +152,28 @@ def page_key_identity():
     same = ["https://bank.example/results", "http://www.bank.example/results/", "https://BANK.example:443/results#x",
             "http://bank.example:80/results"]
     assert len({k(u) for u in same}) == 1, {u: k(u) for u in same}
-    for other in ("https://bank.example:8443/results", "https://user:pw@bank.example/results",
+    for other in ("https://bank.example:8443/results",
                   "https://bank.example/Results", "https://bank.example/results?a=1", "https://evil.example/results",
                   "https://bank.example:notaport/results"):
         assert k(other) != k(same[0]), f"{other} collides with the cited page"
+
+def credentials_url_not_consulted():
+    archive(SNAPS, {ts: PAGE_WITH for ts, _ in SNAPS})
+    for u in ("https://alice:pw@bank.example/results", "https://alice@bank.example/results"):
+        c = D.check_archive(cite(resolved=True, verbatim=False, url=u))
+        assert c.verdict == "NOT_VERBATIM" and "credentials" in c.archive_note, (u, c.verdict, c.archive_note)
+    assert not calls, calls
+
+def variant_capture_is_disclosed():
+    rows = [("20200101000000", "http://www.bank.example/results")]
+    archive(rows, {ts: PAGE_WITH for ts, _ in rows})
+    c = D.check_archive(cite(resolved=False, http_status=404))
+    assert c.verdict == "ARCHIVED_ONLY", c.archive_note
+    assert "VARIANT" in c.archive_note and "http" in c.archived["variant"] and "www.bank.example" in c.archived["variant"], c.archived
+    D._ARCHIVE_CACHE.clear()
+    archive(SNAPS[:1], {ts: PAGE_WITH for ts, _ in SNAPS})
+    c = D.check_archive(cite(resolved=False, http_status=404))
+    assert "variant" not in c.archived and "VARIANT" not in c.archive_note, "exact capture marked as variant"
 
 def fragment_not_sent():
     archive(SNAPS, {ts: PAGE_WITH for ts, _ in SNAPS})
@@ -261,7 +279,9 @@ for n, f in [("rewritten page: quote found in an older copy", rewritten_page_fou
              ("replay redirected elsewhere is not evidence", redirect_to_another_page_is_not_evidence),
              ("fragment is not sent to the archive", fragment_not_sent),
              ("another page's capture is not evidence", other_pages_rows_are_not_evidence),
-             ("page identity: ports and userinfo kept", page_key_identity),
+             ("page identity: non-default ports kept", page_key_identity),
+             ("URL with credentials is never sent", credentials_url_not_consulted),
+             ("scheme/www variant capture is disclosed", variant_capture_is_disclosed),
              ("CLI: --wayback --json end to end", cli_wayback_json_end_to_end)]:
     case(n, f)
 print(f"---\ntests_run: {run}\ntests_failed: {failed}\n---")

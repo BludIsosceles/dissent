@@ -181,8 +181,12 @@ its older ones.
   printed. An archive that could not be asked is not evidence either way.
 
 Citations that already point at a recognised archive link, pages that verified, and pages dissent
-abstained on are never sent to archive.org. A replay that redirects to a different page is not
-counted as evidence. Without the flag, output is v0.8's key for key.
+abstained on are never sent to archive.org, and neither is a URL carrying credentials. Only
+captures of the cited page count: a replay that redirects elsewhere, or a capture on another
+port, is not evidence. An `http://` capture of an `https://` page, and the `www.`/bare twin, are
+accepted because archives often hold only those. When the matched capture is such a variant,
+the report says **VARIANT** and names the difference, since it is a different origin. Without
+the flag, output is v0.8's key for key.
 
 **Measured (2026-10-09, live):** the v0.8 benchmark's six remaining wrong accusations all move to
 `ARCHIVED_ONLY`. The three Walmart citations (live 404) were found in the 2026-05-21 copy, the
