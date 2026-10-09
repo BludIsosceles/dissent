@@ -1210,6 +1210,11 @@ def _page_key(url: str) -> str:
     return f"{host}{port}{u.path.rstrip('/') or ''}" + (f"?{u.query}" if u.query else "")
 
 
+def _has_userinfo(url: str) -> bool:
+    """Credentials in a URL: never sent, never matched, on either side."""
+    return "@" in (urllib.parse.urlsplit(url).netloc or "")
+
+
 def check_archive(c: Citation) -> Citation:
     """Only for a citation the live page would accuse. Never upgrades to a pass.
 
@@ -1220,7 +1225,7 @@ def check_archive(c: Citation) -> Citation:
         return c                               # nothing accused, or a DNS/connection failure
     if original_url(c.url) != c.url:
         return c                               # already an archive link
-    if "@" in (urllib.parse.urlsplit(c.url).netloc or ""):
+    if _has_userinfo(c.url):
         c.archive_note = "archive not consulted: the URL carries credentials, so no capture can be shown to be the same page"
         return c
     url = urllib.parse.urldefrag(c.url)[0]     # a fragment is never sent to a server
@@ -1232,7 +1237,8 @@ def check_archive(c: Citation) -> Citation:
     # Only captures OF THE CITED PAGE count. The index is asked for an exact match,
     # but a row naming another page would launder that page's text into evidence
     # for this one (luna confirmation read), so every row is checked here too.
-    snaps = [(ts, o) for ts, o in snaps if _page_key(o) == _page_key(url)]
+    snaps = [(ts, o) for ts, o in snaps
+             if not _has_userinfo(o) and _page_key(o) == _page_key(url)]
     if not snaps:
         c.archive_note = "no archived copy exists"
         return c
@@ -1247,7 +1253,8 @@ def check_archive(c: Citation) -> Citation:
         if f.err or f.refused or f.unreadable or not f.body:
             unreadable += 1
             continue
-        if f.final_url and _page_key(original_url(f.final_url)) != _page_key(orig):
+        if f.final_url and (_has_userinfo(original_url(f.final_url))
+                            or _page_key(original_url(f.final_url)) != _page_key(orig)):
             elsewhere += 1                     # replay redirected to a different page
             continue
         read += 1

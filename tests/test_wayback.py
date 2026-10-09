@@ -163,6 +163,15 @@ def credentials_url_not_consulted():
         c = D.check_archive(cite(resolved=True, verbatim=False, url=u))
         assert c.verdict == "NOT_VERBATIM" and "credentials" in c.archive_note, (u, c.verdict, c.archive_note)
     assert not calls, calls
+    rows = [("20200101000000", "https://alice:pw@bank.example/results")]
+    archive(rows, {ts: PAGE_WITH for ts, _ in rows})
+    c = D.check_archive(cite(resolved=False, http_status=404))
+    assert c.verdict == "UNRESOLVED" and not any(k == "get" for k, _ in calls), (c.archive_note, calls)
+    D._ARCHIVE_CACHE.clear(); calls.clear()
+    archive(SNAPS[:1], {ts: PAGE_WITH for ts, _ in SNAPS},
+            final={"20190101000000": "https://web.archive.org/web/2019id_/https://bob:x@bank.example/results"})
+    c = D.check_archive(cite(resolved=False, http_status=404))
+    assert c.verdict == "UNRESOLVED" and "redirected to another page" in c.archive_note, c.archive_note
 
 def variant_capture_is_disclosed():
     rows = [("20200101000000", "http://www.bank.example/results")]
