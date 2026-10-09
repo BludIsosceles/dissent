@@ -1195,11 +1195,19 @@ def _quote_in(f: Fetched, quote: str) -> bool:
 
 
 def _page_key(url: str) -> str:
-    """Same page for the archive's purposes: scheme, a leading www., a trailing
-    slash and any fragment ignored; host case-folded; path and query kept."""
+    """Same page for the archive's purposes. Ignored: http vs https (archives often
+    hold the http capture of an https page), the default ports 80/443, a leading
+    www., a trailing slash, a fragment, host case. KEPT: any other port and any
+    userinfo -- a different port is a different service (luna confirmation read)."""
     u = urllib.parse.urlsplit(urllib.parse.urldefrag(url)[0])
     host = (u.hostname or "").lower().removeprefix("www.")
-    return f"{host}{u.path.rstrip('/') or ''}" + (f"?{u.query}" if u.query else "")
+    try:
+        port = u.port
+    except ValueError:
+        return "invalid:" + url                # unparseable port: matches nothing else
+    port = "" if port in (None, 80, 443) else f":{port}"
+    user = f"{u.username}@" if u.username is not None else ""
+    return f"{user}{host}{port}{u.path.rstrip('/') or ''}" + (f"?{u.query}" if u.query else "")
 
 
 def check_archive(c: Citation) -> Citation:

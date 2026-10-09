@@ -147,6 +147,16 @@ def other_pages_rows_are_not_evidence():
     assert c.verdict == "NOT_VERBATIM" and c.archive_note == "no archived copy exists", (c.verdict, c.archive_note)
     assert not any(k == "get" for k, _ in calls), f"another page's copy was fetched: {calls}"
 
+def page_key_identity():
+    k = D._page_key
+    same = ["https://bank.example/results", "http://www.bank.example/results/", "https://BANK.example:443/results#x",
+            "http://bank.example:80/results"]
+    assert len({k(u) for u in same}) == 1, {u: k(u) for u in same}
+    for other in ("https://bank.example:8443/results", "https://user:pw@bank.example/results",
+                  "https://bank.example/Results", "https://bank.example/results?a=1", "https://evil.example/results",
+                  "https://bank.example:notaport/results"):
+        assert k(other) != k(same[0]), f"{other} collides with the cited page"
+
 def fragment_not_sent():
     archive(SNAPS, {ts: PAGE_WITH for ts, _ in SNAPS})
     D.check_archive(cite(resolved=True, verbatim=False, url="https://bank.example/results#q3"))
@@ -251,6 +261,7 @@ for n, f in [("rewritten page: quote found in an older copy", rewritten_page_fou
              ("replay redirected elsewhere is not evidence", redirect_to_another_page_is_not_evidence),
              ("fragment is not sent to the archive", fragment_not_sent),
              ("another page's capture is not evidence", other_pages_rows_are_not_evidence),
+             ("page identity: ports and userinfo kept", page_key_identity),
              ("CLI: --wayback --json end to end", cli_wayback_json_end_to_end)]:
     case(n, f)
 print(f"---\ntests_run: {run}\ntests_failed: {failed}\n---")
