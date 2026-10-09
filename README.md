@@ -122,7 +122,7 @@ written nor selected by this project.
 
 The 6 remaining accusations are all defensible: three Walmart passages behind a genuine 404, and
 three Intesa passages where the live page was rewritten after the archive copy was taken (the
-archive copy verifies 3/3). A Wayback fallback for changed pages is the follow-up.
+archive copy verifies 3/3). v0.9's `--wayback` is the follow-up; see below.
 
 ### Three model families, and where they disagree
 
@@ -162,6 +162,42 @@ benchmark. A held-out set is owed before any L3 number here should be treated as
 - **L3** — `PARTIAL` vote with exact-token parsing, judge reasoning printed in the report, and
   one `FLAGGED` set fixing a latent bug where `UNSUPPORTED-DEGRADED` and `JUDGES-FAILED` exited
   **0**. *83 checks.*
+
+## Changed and deleted pages — `--wayback` (v0.9)
+
+A quote can be honest and still absent: the page was deleted, or rewritten after the citation
+was made. The live page is the wrong witness for that. With `--wayback`, any citation that would
+otherwise be **accused** (`NOT_VERBATIM`, or `UNRESOLVED` on a 404/410) is checked against
+archive.org copies of the same URL. dissent samples up to four distinct-content snapshots,
+newest first and then oldest: a deleted page's quote is in its newest copy, a rewritten page's in
+its older ones.
+
+- **Found** → `ARCHIVED_ONLY`, with the snapshot URL and date. This is **still flagged**. The
+  sentence really was on the page, so it is not fabricated. But it has since left the page, and
+  the reader should ask why: corrections and retractions look exactly like this.
+- **Absent from every sampled copy** → the accusation stands, and the report says how many copies
+  were checked.
+- **Archive unreachable, rate-limited, or unreadable** → nothing changes, and the reason is
+  printed. An archive that could not be asked is not evidence either way.
+
+Citations that already point at a recognised archive link, pages that verified, and pages dissent
+abstained on are never sent to archive.org. A replay that redirects to a different page is not
+counted as evidence. Without the flag, output is v0.8's key for key.
+
+**Measured (2026-10-09, live):** the v0.8 benchmark's six remaining wrong accusations all move to
+`ARCHIVED_ONLY`. The three Walmart citations (live 404) were found in the 2026-05-21 copy, the
+three Intesa citations (page rewritten) in the 2026-04-17 copy. As a control, two invented
+sentences cited to those same two pages stayed accused; for each, four archived copies were read
+and the quote was in none. That is six cases and two controls, not a rate.
+
+**Expect the archive to be slow.** Its index timed out or rate-limited dissent (HTTP 504 / 429)
+on the first live runs. Lookups are cached per URL, retried once, and run two at a time. When
+the archive cannot be asked, the report says so and the verdict is unchanged.
+
+**Limits:** the replayed `id_` copy is trusted as the captured page. "Distinct" snapshots means
+distinct archive digests, which approximates distinct content. Up to four snapshots are sampled,
+so a quote that lived on a page only briefly can be missed, and when it is, the accusation
+stands.
 
 ## Scope: what this tool is actually for
 

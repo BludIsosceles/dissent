@@ -40,14 +40,16 @@ import socket
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 import zlib
 from typing import Iterable
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 UA = "Mozilla/5.0 (compatible; dissent/0.1; +https://proiso.org/delta)"
 # Used ONLY for a single retry after the honest UA above is refused. Observed
@@ -145,6 +147,12 @@ class Citation:
     page_meta: dict | None = None
     meta_issues: list[str] = dataclasses.field(default_factory=list)      # *_MISMATCH: flagged
     meta_unchecked: list[str] = dataclasses.field(default_factory=list)   # *_UNCHECKED: not flagged
+    # --wayback (v0.9). `archived` is set when the quote is absent from the live
+    # page (or the page is gone) but present in an archived copy; `archive_note`
+    # records what the archive check did either way. None unless --wayback ran,
+    # so default output is v0.8's, key for key.
+    archived: dict | None = None
+    archive_note: str | None = None
 
     @property
     def verdict(self) -> str:
@@ -153,6 +161,11 @@ class Citation:
         # the cited page does not exist when a browser opens it fine.
         if self.blocked:
             return "UNVERIFIABLE"
+        # The quote really was on this page once. That is not fabrication, and it is
+        # not a pass either: a sentence that left a page may have been corrected or
+        # retracted. Its own label, flagged, never NOT_VERBATIM or UNRESOLVED.
+        if self.archived:
+            return "ARCHIVED_ONLY"
         if self.resolved is False:
             return "UNRESOLVED"
         # A page whose text we cannot read is NOT evidence of a bad citation.
@@ -305,6 +318,7 @@ class Fetched:
     unreadable: str | None = None   # served, but in a form we cannot decode
     note: str | None = None         # e.g. "needed a browser user agent"
     via_browser: bool = False
+    final_url: str | None = None    # after redirects; the archive check compares it (v0.9)
 
     @property
     def text(self) -> str:
@@ -397,7 +411,7 @@ def _fetch_once(url: str, ua: str, timeout: int) -> Fetched:
             ce = resp.headers.get("Content-Encoding")
             f = Fetched(resp.status, decode_body(raw, ce),
                         resp.headers.get_content_type() or "",
-                        resp.headers.get_content_charset())
+                        resp.headers.get_content_charset(), final_url=resp.geturl())
             if ce and "br" in ce.lower():
                 f.unreadable = "server sent a brotli-encoded body that the standard library cannot decode"
             return f
@@ -1083,6 +1097,156 @@ def check_citation(c: Citation) -> Citation:
 
     c.verbatim = False
     c.near_miss = best_window(page, quote)
+    return c
+
+
+# ---------------------------------------------------------------- wayback (v0.9)
+#
+# The KPMG benchmark's last six wrong accusations were all one shape: the cited
+# page was gone (three Walmart 404s) or rewritten after the citation was made
+# (three Intesa passages, which the archive copy verified 3/3). The live page is
+# the wrong witness for a quote taken from an earlier version of it. So, when
+# asked, a citation that would be accused is checked against archived copies.
+# A hit is ARCHIVED_ONLY (flagged: the sentence left the page, and a reader
+# should ask why). A miss across every sampled copy is recorded, and the
+# accusation stands with that extra evidence.
+
+WAYBACK_CDX = "https://web.archive.org/cdx/search/cdx"
+WAYBACK_SAMPLE = 4          # distinct-content snapshots tried, at most
+
+
+_ARCHIVE_LOCK = threading.Lock()
+_ARCHIVE_LOCKS: dict[str, threading.Lock] = {}
+_ARCHIVE_CACHE: dict[str, object] = {}       # "cdx:"+url -> snapshots; "get:"+snapshot -> Fetched
+
+
+def _cached(key: str, make):
+    """One lookup per key per run. Benchmark documents cite one page many times,
+    and the CDX endpoint is slow enough that repeating it timed out five of six
+    lookups in the first live run. A failure is cached too: asked once, failed once.
+    The cache lives for the process; main() clears it at the start of a --wayback run."""
+    with _ARCHIVE_LOCK:
+        lock = _ARCHIVE_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        if key not in _ARCHIVE_CACHE:
+            try:
+                _ARCHIVE_CACHE[key] = make()
+            except Exception as e:  # noqa: BLE001
+                _ARCHIVE_CACHE[key] = e
+    v = _ARCHIVE_CACHE[key]
+    if isinstance(v, Exception):
+        raise v
+    return v
+
+
+def wayback_snapshots(url: str, timeout: int = 90) -> list[tuple[str, str]]:
+    """(timestamp, original) of distinct-content 200 snapshots, oldest first.
+    Raises on network failure: an archive we could not ask is not an answer."""
+    return _cached("cdx:" + url, lambda: _with_retry(lambda: _cdx(url, timeout)))
+
+
+def _with_retry(fn, tries: int = 2):
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001
+            if i == tries - 1:
+                raise
+            time.sleep(5)
+
+
+def _cdx(url: str, timeout: int) -> list[tuple[str, str]]:
+    q = urllib.parse.urlencode({"url": url, "output": "json", "filter": "statuscode:200",
+                                "fl": "timestamp,original,digest", "limit": "-200"})
+    req = urllib.request.Request(f"{WAYBACK_CDX}?{q}", headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read(5_000_000).decode("utf-8", "replace").strip()
+    rows = json.loads(body) if body else []
+    if not isinstance(rows, list):
+        raise ValueError(f"CDX returned {type(rows).__name__}, not a list of rows")
+    if rows and rows[0] == ["timestamp", "original", "digest"]:
+        rows = rows[1:]
+    seen, out = set(), []
+    for row in rows:
+        if not (isinstance(row, list) and len(row) >= 3 and re.fullmatch(r"\d{14}", str(row[0]))
+                and str(row[1]).startswith(("http://", "https://"))):
+            continue                           # malformed row: skipped, never guessed at
+        key = row[2] or row[0]                 # an empty digest says nothing about content
+        if key not in seen:
+            seen.add(key); out.append((row[0], row[1]))
+    return sorted(out)
+
+
+def sample_snapshots(snaps: list[tuple[str, str]], k: int = WAYBACK_SAMPLE) -> list[tuple[str, str]]:
+    """Newest first, then oldest, then evenly between: a rewritten page's quote
+    lives in the OLDER copies, a deleted page's in the newest."""
+    if len(snaps) <= k:
+        return snaps[::-1]
+    # n > k, so consecutive sample points are more than 1 apart and rounding
+    # cannot collide: always exactly k distinct snapshots.
+    n = len(snaps)
+    idx = [n - 1, 0] + [round(i * (n - 1) / (k - 1)) for i in range(1, k - 1)]
+    return [snaps[i] for i in idx]
+
+
+def _quote_in(f: Fetched, quote: str) -> bool:
+    page = normalize(pdf_text(f.body) if f.is_pdf else strip_markup(f.text))
+    return quote in page or (len(squash(quote)) >= 20 and squash(quote) in squash(page))
+
+
+def _page_key(url: str) -> str:
+    """Same page for the archive's purposes: scheme, a leading www., a trailing
+    slash and any fragment ignored; host case-folded; path and query kept."""
+    u = urllib.parse.urlsplit(urllib.parse.urldefrag(url)[0])
+    host = (u.hostname or "").lower().removeprefix("www.")
+    return f"{host}{u.path.rstrip('/') or ''}" + (f"?{u.query}" if u.query else "")
+
+
+def check_archive(c: Citation) -> Citation:
+    """Only for a citation the live page would accuse. Never upgrades to a pass.
+
+    Gated on the VERDICT, not on raw fields: a citation dissent abstained on
+    (blocked, unreadable) is not accused and is never sent (luna read of v0.9)."""
+    if c.verdict not in ("NOT_VERBATIM", "UNRESOLVED") or \
+            (c.verdict == "UNRESOLVED" and c.http_status not in GONE_CODES):
+        return c                               # nothing accused, or a DNS/connection failure
+    if original_url(c.url) != c.url:
+        return c                               # already an archive link
+    url = urllib.parse.urldefrag(c.url)[0]     # a fragment is never sent to a server
+    try:
+        snaps = wayback_snapshots(url)
+    except Exception as e:  # noqa: BLE001
+        c.archive_note = f"archive not consulted: {type(e).__name__}: {e}"[:200]
+        return c
+    if not snaps:
+        c.archive_note = "no archived copy exists"
+        return c
+    quote, read, unreadable, elsewhere = normalize(c.quote), 0, 0, 0
+    for ts, orig in sample_snapshots(snaps):
+        snap = f"https://web.archive.org/web/{ts}id_/{orig}"
+        try:
+            f = _cached("get:" + snap, lambda: fetch_page(snap, timeout=60, retries=1))
+        except Exception:  # noqa: BLE001  -- one bad copy never aborts the run
+            unreadable += 1
+            continue
+        if f.err or f.refused or f.unreadable or not f.body:
+            unreadable += 1
+            continue
+        if f.final_url and _page_key(original_url(f.final_url)) != _page_key(orig):
+            elsewhere += 1                     # replay redirected to a different page
+            continue
+        read += 1
+        if _quote_in(f, quote):
+            c.archived = {"snapshot": snap, "timestamp": ts, "snapshots_known": len(snaps)}
+            live = (f"live page HTTP {c.http_status}" if c.resolved is False
+                    else "live page no longer contains it")
+            c.archive_note = f"quote found in archived copy of {ts[:4]}-{ts[4:6]}-{ts[6:8]}; {live}"
+            return c
+    skipped = "".join([f"; {unreadable} unreadable" if unreadable else "",
+                       f"; {elsewhere} redirected to another page" if elsewhere else ""])
+    c.archive_note = (f"no archived copy could be read ({len(snaps)} known{skipped})" if not read else
+                      f"{read} archived cop{'y' if read == 1 else 'ies'} read, quote in none "
+                      f"({len(snaps)} known{skipped})")
     return c
 
 
@@ -1774,13 +1938,13 @@ def independence_report(cites: Iterable[Citation]) -> list[str]:
 # by its own source (REWE's "personalized offers"). The label says HOW MUCH is wrong; it does
 # not go quiet.
 FLAGGED = frozenset({
-    "UNRESOLVED", "NOT_VERBATIM", "UNSUPPORTED", "DISPUTED", "JUDGES-FAILED",
+    "UNRESOLVED", "NOT_VERBATIM", "ARCHIVED_ONLY", "UNSUPPORTED", "DISPUTED", "JUDGES-FAILED",
     "UNSUPPORTED-DEGRADED", "PARTIALLY_SUPPORTED", "PARTIALLY_SUPPORTED-DEGRADED",
 })
 
 COLORS = {"UNRESOLVED": "\033[31m", "NOT_VERBATIM": "\033[31m", "DISPUTED": "\033[33m",
           "UNSUPPORTED": "\033[31m", "SUPPORTED": "\033[32m", "VERBATIM": "\033[32m",
-          "UNVERIFIABLE": "\033[33m", "JUDGES-FAILED": "\033[31m", "META_MISMATCH": "\033[31m",
+          "UNVERIFIABLE": "\033[33m", "ARCHIVED_ONLY": "\033[33m", "JUDGES-FAILED": "\033[31m", "META_MISMATCH": "\033[31m",
           "SUPPORTED-DEGRADED": "\033[33m", "UNSUPPORTED-DEGRADED": "\033[33m",
           "PARTIALLY_SUPPORTED": "\033[33m", "PARTIALLY_SUPPORTED-DEGRADED": "\033[33m"}
 
@@ -1814,7 +1978,13 @@ def report(cites: list[Citation], problems: list[str], use_color: bool) -> int:
         if c.unreadable:
             print(f"  ?? cannot verify: {c.unreadable}")
             print("     (this is NOT an accusation — the citation may be perfectly good)")
-        if c.verbatim is False:
+        if c.archived:
+            print(f"  ~~ {c.archive_note}")
+            print(f"     snapshot: {c.archived['snapshot']}")
+            print("     (not fabricated — but the source no longer says it; check for a correction or retraction)")
+        elif c.archive_note:
+            print(f"  archive: {c.archive_note}")
+        if c.verbatim is False and not c.archived:
             print("  !! quoted text does NOT appear on the page")
             print(f"  page  : {c.near_miss}" if c.near_miss else "  page  : no similar passage found")
         if c.support:
@@ -1849,6 +2019,8 @@ def citation_json(c: Citation) -> dict:
     if not c.declared_meta:
         for k in _META_FIELDS:
             d.pop(k, None)
+    if c.archived is None and c.archive_note is None:
+        d.pop("archived"); d.pop("archive_note")
     return d
 
 
@@ -1865,6 +2037,9 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--json", action="store_true", help="emit JSON instead of a report")
     ap.add_argument("--no-color", action="store_true")
+    ap.add_argument("--wayback", action="store_true",
+                    help="before accusing (NOT_VERBATIM, or a 404/410), look for the quote in "
+                         "archive.org copies of the page; a hit is ARCHIVED_ONLY, still flagged")
     args = ap.parse_args()
 
     cites = parse(args.file)
@@ -1875,6 +2050,10 @@ def main() -> int:
     # L1 + L2, in parallel. Free, deterministic, and where most defects die.
     with futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
         cites = list(pool.map(check_citation, cites))
+        if args.wayback:     # few workers: archive.org rate-limits, and only accused citations go
+            _ARCHIVE_CACHE.clear()
+            with futures.ThreadPoolExecutor(max_workers=2) as apool:
+                cites = list(apool.map(check_archive, cites))
 
     # L3 only for citations that earned it.
     eligible = [c for c in cites if c.verbatim]
