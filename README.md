@@ -148,7 +148,101 @@ property of the tool. The verdict change itself stands — `PARTIALLY_SUPPORTED`
 of a claim the source does not carry, and never passes a claim silently.
 
 **Also not held-out:** the L3 prompt's run 2 was tuned after reading run 1 on this same
-benchmark. A held-out set is owed before any L3 number here should be treated as predictive.
+benchmark. The held-out measurement that was owed is now below: *Held-out L3 measurement*.
+
+## Held-out L3 measurement (v0.9.0, WiCE)
+
+**Use these L3 numbers, not the in-sample ones above.** The set is the **WiCE** test split
+(Kamoi et al., 2023): 358 real Wikipedia claims with their cited sources, labelled by people as
+supported (111), partially supported (215) or not supported (32). dissent was never built or
+tuned on it.
+
+The design was **pre-registered and committed before any judge ran**. L3 ran exactly as
+shipped (prompt, fencing, vote parsing, verdict logic). Two judges from different families did
+the reading: gpt-5.6-luna and glm-5.3. All intervals are Wilson 95%. Below, "flag" means any
+vote other than SUPPORTS; "gold" means WiCE's human label.
+
+| Measure | glm-5.3 | gpt-5.6-luna | Both judges, dissent's verdict |
+|---|---|---|---|
+| Gold not-supported (32): flagged | 31 = 96.9% [84.3–99.4] | 32 = 100% [89.3–100] | 0 SUPPORTED = 0% [0–10.7]; 29 UNSUPPORTED = 90.6% [75.8–96.8] |
+| Gold not-supported (32): voted SUPPORTS (miss) | 1 = 3.1% [0.6–15.7] | 0 = 0% [0–10.7] | — |
+| Gold partial or not-supported (247): flagged (recall) | 86.2% [81.4–90.0] | 95.5% [92.2–97.5] | — |
+| Flags whose gold is partial or not-supported (precision) | 82.6% [77.5–86.7] | 79.5% [74.5–83.7] | — |
+| Gold supported (111): voted SUPPORTS (clean pass; specificity) | 59.5% [50.2–68.1] | 45.0% [36.1–54.3] | 44 SUPPORTED = 39.6% [31.0–48.9] |
+| Gold supported (111): voted DOES_NOT_SUPPORT (hard accusation) | 9.0% [5.0–15.8] | 21.6% [15.0–30.2] | 4 UNSUPPORTED = 3.6% [1.4–8.9] |
+| Gold supported (111): DISPUTED | — | — | 25 = 22.5% [15.7–31.1] |
+| All items (358): DISPUTED | — | — | 63 = 17.6% [14.0–21.9] |
+| 3-class accuracy (358); macro-F1 | 61.7% [56.6–66.6]; 0.587 | 59.2% [54.1–64.2]; 0.550 | — |
+
+Combined verdict for every gold class (both judges, dissent's `Citation.verdict`):
+
+| Gold (n) | SUPPORTED | PARTIALLY_SUPPORTED | UNSUPPORTED | DISPUTED | other (degraded) |
+|---|---|---|---|---|---|
+| supported (111) | 44 | 35 | 4 | 25 | 3 |
+| partial (215) | 11 | 121 | 45 | 36 | 2 |
+| not supported (32) | 0 | 1 | 29 | 2 | 0 |
+
+The per-judge confusion matrices are in `benchmarks/wice-heldout/RESULTS.md`. Every
+pre-registered metric appears either here or there.
+
+**What the numbers say, using WiCE's labels:**
+- **Unsupported citations do not pass clean.** On the 32 items WiCE labels not supported,
+  none received a combined SUPPORTED verdict (0/32, interval 0–10.7%). 29 became UNSUPPORTED,
+  2 DISPUTED and 1 PARTIALLY_SUPPORTED.
+- **Flagging is sensitive, and 17–21% of flags land on a supported item.** Recall and
+  precision against WiCE's partial-or-unsupported labels:
+  - glm: recall 86.2%, precision 82.6%;
+  - luna: recall 95.5%, precision 79.5%.
+
+  So 17.4–20.5% of flags land on items WiCE labels supported.
+- **Supported citations often do not pass clean.** On WiCE-supported items, glm voted
+  something other than SUPPORTS on 40.5% and luna on 55.0%. That includes PARTIAL as well as
+  hard flags, and it is disagreement with WiCE's label, not an adjudicated false-positive rate.
+  Combined, 39.6% of WiCE-supported citations got a clean SUPPORTED. That is lower than either
+  judge alone, because a combined SUPPORTED needs both judges to vote SUPPORTS.
+- **The combined verdict cut hard accusations.** Under dissent v0.9's verdict logic
+  (`Citation.verdict`), UNSUPPORTED needs every judge to vote DOES_NOT_SUPPORT, and a split
+  between DOES_NOT_SUPPORT and a supporting vote is DISPUTED. On WiCE-supported items, the
+  hard-accusation rate fell from 9.0% (glm) and 21.6% (luna) alone to 3.6% combined. 22.5%
+  became DISPUTED instead, left for a person to read.
+- **The withdrawn PARTIAL claim stays withdrawn.** Across all 326 items WiCE labels supported
+  or partial, the judges cast a hard DOES_NOT_SUPPORT on 19.6% (glm: 10 of 111 supported plus
+  54 of 215 partial) and 29.8% (luna: 24 + 73). These are shares of all 326, not of the
+  non-SUPPORTS votes. The supported share overlaps the hard-accusation row above.
+- **The judges differ.** luna voted against citations more often: lower specificity, higher
+  hard-flag rates, higher recall and lower precision than glm. The two agreed on 71.2% of the
+  358 items (Cohen's kappa 0.556 over the three votes).
+
+**Caveats:**
+- WiCE labels a claim against its whole source; L3 judges it against the quote. For supported
+  and partially supported items the quote is the annotators' supporting sentences. For
+  not-supported items it is the three source sentences most similar to the claim. Because the
+  rule depends on the label, median quote length differs by class: 269 characters (supported),
+  205 (partial), 394 (not supported).
+- dissent's PARTIAL means a *peripheral* gap; WiCE's means any gap. So the 3-class accuracy
+  does not line up with dissent's definitions and should be read cautiously. The binary
+  metrics avoid that comparison, but they still rest on WiCE's labels and on the quote-versus-
+  source difference.
+- 32 not-supported items is few, and those intervals are wide.
+
+**Read after the run, not adjudicated** (post-hoc interpretation, not pre-registered; it changes
+no number above): some votes against WiCE-supported citations follow dissent's stated rules. One quote says a comedian "is due to open" for a tour; the claim says
+she performed. dissent's prompt counts a planned event presented as having happened as
+unsupported. No independent party has adjudicated how many such cases there are, so the table
+counts all of them against dissent.
+
+**Who checked this write-up.** Before publication it was read three times, and the findings
+from each read were folded into the next draft:
+1. gpt-5.6-luna, one of the two judge families measured. It was used for arithmetic and
+   framing; no independence is claimed for that read.
+2. minimax-m3, not a judge family.
+3. minimax-m3 and seed-2.1-turbo, neither a judge family. Neither found a misreported number.
+   Seed found one false sentence: this paragraph had claimed, before Seed had read the draft,
+   that Seed's findings were already folded in.
+
+The last fold was clarity edits plus that correction, and it was not read again. The arithmetic is reproducible: `benchmarks/wice-heldout/` holds the pre-registration,
+items, every transcript and the scorer, and `python3 benchmarks/wice-heldout/score.py`
+reproduces every number above.
 
 ### What v0.8 changed
 
