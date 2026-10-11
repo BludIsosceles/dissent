@@ -43,12 +43,13 @@ case("control: Standard V 2 is rc4",
 # -- readability: a page that cannot be read is never read (and so never accused)
 R = D.readability
 words = "word " * 200                                   # 1000 chars of text: above 400, below 1500
-mostly_script = "<html><script>" + "x" * 6000 + "</script><p>" + words + "</p></html>"
+HEAD = '<html><head><title>A page</title><meta name="description" content="d"></head><body>'
+mostly_script = HEAD + "<script>" + "x" * 6000 + "</script><p>" + words + "</p></body></html>"
 case("mostly-script page is unreadable (script share alone)",
-     R(mostly_script, words) is not None, R(mostly_script, words))
-thin = "<html>" + "<div class=a></div>" * 12000 + "<p>" + words + "</p></html>"   # no script, text < 1% of raw
+     "mostly script" in (R(mostly_script, words) or ""), R(mostly_script, words))
+thin = HEAD + "<div class=a></div>" * 12000 + "<p>" + words + "</p></body></html>"   # no script, text < 1% of raw
 case("text under 1% of a large page is unreadable (ratio alone)",
-     R(thin, words) is not None, (len(words) / len(thin), R(thin, words)))
+     "mostly script" in (R(thin, words) or ""), (len(words) / len(thin), R(thin, words)))
 pdf_raw = "%PDF-1.7\n" + "stream " * 600
 case("raw PDF bytes served as text are unreadable, not read",
      R(pdf_raw, "stream " * 600) is not None and "PDF" in (R(pdf_raw, "stream " * 600) or ""),
